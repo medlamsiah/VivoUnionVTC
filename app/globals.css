@@ -1,0 +1,72 @@
+﻿@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 255 255 255;
+  --fg: 14 16 20;
+  --muted: 106 115 125;
+  --card: 255 255 255;
+  --border: 229 231 235;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  color: rgb(var(--fg));
+  background: rgb(var(--bg));
+}
+
+.gradient-dark {
+  background:
+    radial-gradient(900px 600px at 15% 20%, rgba(20,184,166,0.45), transparent 55%),
+    radial-gradient(800px 500px at 85% 35%, rgba(94,234,212,0.22), transparent 60%),
+    radial-gradient(900px 500px at 45% 90%, rgba(15,118,110,0.18), transparent 60%),
+    linear-gradient(135deg, #061a18 0%, #0b2d2a 55%, #061a18 100%);
+}
+
+.glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(229, 231, 235, 0.9);
+}
+
+.btn {
+  @apply inline-flex items-center justify-center rounded-full px-6 py-3 font-semibold transition shadow-sm border border-gray-200 bg-white text-gray-900 hover:bg-gray-50;
+}
+
+.btn-primary {
+  @apply inline-flex items-center justify-center rounded-full px-6 py-3 font-semibold transition border border-transparent bg-[#22c55e] text-white hover:scale-[1.02] hover:shadow-xl;
+}
+
+.input {
+  @apply w-full rounded-xl border border-gray-200 bg-white px-4 py-3 outline-none focus:ring-2 focus:ring-vivo/25;
+}
+
+.label {
+  @apply text-sm font-medium text-gray-700;
+}
+
+.helper {
+  @apply text-sm text-gray-500;
+}
+
+.card {
+  @apply rounded-3xl border border-gray-200 bg-white shadow-soft;
+}
+
+@keyframes vivo-partners-marquee {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-33.333%);
+  }
+}
+
+.vivo-partners-track {
+  animation: vivo-partners-marquee 22s linear infinite;
+}
+

@@ -1,0 +1,49 @@
+<svg width="960" height="720" viewBox="0 0 960 720" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="960" height="720" rx="36" fill="#0B1823"/>
+  <rect width="960" height="720" fill="url(#bg1)"/>
+  <circle cx="795" cy="122" r="180" fill="url(#glow1)" fill-opacity=".55"/>
+  <circle cx="151" cy="575" r="220" fill="url(#glow2)" fill-opacity=".42"/>
+  <rect x="0" y="454" width="960" height="266" fill="url(#seat)"/>
+  <rect x="101" y="110" width="760" height="450" rx="30" fill="url(#window)" fill-opacity=".28"/>
+  <ellipse cx="484" cy="544" rx="178" ry="142" fill="#102C36"/>
+  <path d="M350 502C382 433 438 398 482 398C526 398 582 433 614 502L642 720H322L350 502Z" fill="url(#jacket)"/>
+  <rect x="441" y="389" width="83" height="105" rx="35" fill="#6D4A38"/>
+  <ellipse cx="483" cy="295" rx="116" ry="128" fill="#7E5945"/>
+  <path d="M374 283C380 196 435 143 506 143C572 143 624 190 630 277C597 270 556 251 514 226C464 246 420 266 374 283Z" fill="#161B1F"/>
+  <path d="M398 231C432 176 490 154 534 163C578 172 614 205 627 259C593 254 551 237 507 214C468 231 432 247 398 254V231Z" fill="#20262C"/>
+  <ellipse cx="435" cy="297" rx="17" ry="19" fill="#E8ECF1"/>
+  <ellipse cx="531" cy="297" rx="17" ry="19" fill="#E8ECF1"/>
+  <ellipse cx="435" cy="297" rx="8" ry="9" fill="#1C232A"/>
+  <ellipse cx="531" cy="297" rx="8" ry="9" fill="#1C232A"/>
+  <path d="M445 350C464 372 500 373 522 350" stroke="#40211E" stroke-width="7" stroke-linecap="round"/>
+  <path d="M473 317C469 331 468 339 472 347" stroke="#6A4538" stroke-width="4" stroke-linecap="round"/>
+  <path d="M419 281C426 272 439 267 453 269" stroke="#2D1D1A" stroke-width="5" stroke-linecap="round"/>
+  <path d="M511 270C525 266 538 271 547 281" stroke="#2D1D1A" stroke-width="5" stroke-linecap="round"/>
+  <defs>
+    <linearGradient id="bg1" x1="480" y1="0" x2="480" y2="720" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0D3742"/>
+      <stop offset=".5" stop-color="#0E5663"/>
+      <stop offset="1" stop-color="#08151F"/>
+    </linearGradient>
+    <radialGradient id="glow1" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(795 122) rotate(90) scale(180)">
+      <stop stop-color="#3CE8D7"/>
+      <stop offset="1" stop-color="#3CE8D7" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(151 575) rotate(90) scale(220)">
+      <stop stop-color="#0E8C7F"/>
+      <stop offset="1" stop-color="#0E8C7F" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="window" x1="481" y1="110" x2="481" y2="560" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D7F9F4"/>
+      <stop offset="1" stop-color="#7CC7BE" stop-opacity=".2"/>
+    </linearGradient>
+    <linearGradient id="jacket" x1="482" y1="398" x2="482" y2="720" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B4F59"/>
+      <stop offset="1" stop-color="#092E34"/>
+    </linearGradient>
+    <linearGradient id="seat" x1="480" y1="454" x2="480" y2="720" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#09151D" stop-opacity="0"/>
+      <stop offset="1" stop-color="#09151D"/>
+    </linearGradient>
+  </defs>
+</svg>
