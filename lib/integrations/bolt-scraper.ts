@@ -18,7 +18,6 @@ export type WeeklyDriverInput = {
 
 type BoltAccessTokenResponse = {
   access_token?: string;
-  token_type?: string;
   expires_in?: number;
   error?: string;
   error_description?: string;
@@ -41,8 +40,7 @@ type BoltOrder = {
   driverId: string;
   driverName?: string;
   companyId: string;
-  companyName?: string;
-  gross: number;
+  net: number;
   occurredAt: string;
 };
 
@@ -88,11 +86,7 @@ function toRecord(value: unknown): UnknownRecord | null {
     : null;
 }
 
-function toArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function firstString(...values: unknown[]): string | null {
+function firstString(...values: unknown[]) {
   for (const value of values) {
     if (typeof value === "string") {
       const trimmed = value.trim();
@@ -105,15 +99,12 @@ function firstString(...values: unknown[]): string | null {
       return String(value);
     }
   }
-
   return null;
 }
 
-function firstNumber(...values: unknown[]): number | null {
+function firstNumber(...values: unknown[]) {
   for (const value of values) {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
-    }
+    if (typeof value === "number" && Number.isFinite(value)) return value;
 
     if (typeof value === "string") {
       const normalized = value.replace(/[^0-9,.-]/g, "").replace(",", ".").trim();
@@ -128,7 +119,6 @@ function firstNumber(...values: unknown[]): number | null {
       if (nested !== null) return nested;
     }
   }
-
   return null;
 }
 
@@ -182,20 +172,34 @@ function dedupeRecords(items: UnknownRecord[]) {
   });
 }
 
+function getDateRangeTs() {
+  const start = new Date("2026-01-01T00:00:00Z");
+  const end = new Date();
+
+  return {
+    start_ts: Math.floor(start.getTime() / 1000),
+    end_ts: Math.floor(end.getTime() / 1000),
+  };
+}
+
 function isoWeekParts(dateInput: string) {
   const date = new Date(dateInput);
+
   if (Number.isNaN(date.getTime())) {
     return { week: "S1", weekValue: "1970-W01" };
   }
 
-  const utcDate = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const utcDate = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  );
+
   const day = utcDate.getUTCDay() || 7;
   utcDate.setUTCDate(utcDate.getUTCDate() + 4 - day);
 
   const yearStart = new Date(Date.UTC(utcDate.getUTCFullYear(), 0, 1));
-  const weekNumber = Math.ceil((((utcDate.getTime() - yearStart.getTime()) / 86_400_000) + 1) / 7);
-  const year = utcDate.getUTCFullYear();
-  const weekString = String(weekNumber).padStart(2, "0");
+  const weekNumber = Math.ceil(
+    ((utcDate.getTime() - yearStart.getTime()) / 86400000 + 1) / 7,
+  );
 
   return { week: `S${weekNumber}`, weekValue: `${year}-W${weekString}` };
 }
@@ -205,10 +209,16 @@ async function parseJsonSafe(response: Response) {
   if (!text.trim()) return null;
 
   try {
-    return JSON.parse(text) as unknown;
+    return JSON.parse(text);
   } catch {
     throw new Error(`Bolt API returned non-JSON payload (${response.status}): ${text.slice(0, 180)}`);
   }
+}
+
+function isBoltOk(payload: unknown) {
+  const record = toRecord(payload);
+  const code = firstNumber(record?.code);
+  return code === null || code === 0;
 }
 
 async function requestBoltAccessToken() {
@@ -219,8 +229,7 @@ async function requestBoltAccessToken() {
     throw new Error("Identifiants Bolt manquants dans Vercel (BOLT_CLIENT_ID / BOLT_CLIENT_SECRET).");
   }
 
-  const now = Date.now();
-  if (boltTokenCache && boltTokenCache.expiresAt > now + 10_000) {
+  if (boltTokenCache && boltTokenCache.expiresAt > Date.now() + 10000) {
     return boltTokenCache.value;
   }
 
@@ -244,10 +253,9 @@ async function requestBoltAccessToken() {
     throw new Error(`Bolt token request failed (${response.status}) : ${detail}`);
   }
 
-  const expiresInSec = typeof payload.expires_in === "number" ? payload.expires_in : 600;
   boltTokenCache = {
     value: payload.access_token,
-    expiresAt: Date.now() + Math.max(30, expiresInSec - 30) * 1000,
+    expiresAt: Date.now() + ((payload.expires_in ?? 600) - 30) * 1000,
   };
 
   return payload.access_token;
@@ -262,7 +270,7 @@ async function fetchBoltApi(path: string, method: "GET" | "POST", body?: unknown
       Accept: "application/json",
       ...(method !== "GET" ? { "Content-Type": "application/json" } : {}),
     },
-    body: method === "GET" ? undefined : JSON.stringify(body ?? {}),
+    body: method === "POST" ? JSON.stringify(body ?? {}) : undefined,
     cache: "no-store",
   });
 
@@ -449,7 +457,7 @@ function buildWeeklyRows(companies: BoltCompany[], drivers: BoltDriver[], orders
   const companyNameById = new Map(companies.map((company) => [company.id, company.name]));
   const driverById = new Map(drivers.map((driver) => [driver.id, { name: driver.name, companyId: driver.companyId, companyName: driver.companyName }]));
   const rows = new Map<string, WeeklyDriverInput>();
-  let syntheticId = 1;
+  let id = 1;
 
   for (const order of orders) {
     const driverInfo = driverById.get(order.driverId);
@@ -498,10 +506,8 @@ function dedupeBy<T>(items: T[], getKey: (item: T) => string) {
   });
 }
 
-export async function scrapeBoltWeeklyRevenues(): Promise<WeeklyDriverInput[]> {
-  const result = await scrapeBoltWeeklyRevenuesResult();
-  return result.rows;
-}
+let boltCache: BoltSyncResult | null = null;
+let boltCacheTime = 0;
 
 export async function scrapeBoltWeeklyRevenuesResult(): Promise<BoltSyncResult> {
   const diagnostics: string[] = [];
@@ -532,4 +538,9 @@ export async function scrapeBoltWeeklyRevenuesResult(): Promise<BoltSyncResult> 
   diagnostics.push(`Bolt parsed: ${allDrivers.length} chauffeurs, ${allOrders.length} courses, ${rows.length} lignes dashboard.`);
 
   return { rows, updatedAt: new Date().toISOString(), diagnostics };
+}
+
+export async function scrapeBoltWeeklyRevenues() {
+  const result = await scrapeBoltWeeklyRevenuesResult();
+  return result.rows;
 }
