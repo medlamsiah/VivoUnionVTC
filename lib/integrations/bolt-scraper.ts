@@ -33,14 +33,14 @@ type BoltDriver = {
   name: string;
   companyId: string;
   companyName?: string;
-  status?: string;
 };
 
 type BoltOrder = {
   driverId: string;
   driverName?: string;
   companyId: string;
-  net: number;
+  companyName?: string;
+  gross: number;
   occurredAt: string;
 };
 
@@ -53,13 +53,6 @@ type BoltSyncResult = {
 type TokenCache = {
   value: string;
   expiresAt: number;
-};
-
-type BoltApiCall = {
-  ok: boolean;
-  status: number;
-  payload: unknown;
-  message: string;
 };
 
 let boltTokenCache: TokenCache | null = null;
@@ -81,23 +74,15 @@ function getBoltScope() {
 }
 
 function toRecord(value: unknown): UnknownRecord | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
+  return value && typeof value === "object" && !Array.isArray(value)
     ? (value as UnknownRecord)
     : null;
 }
 
 function firstString(...values: unknown[]) {
   for (const value of values) {
-    if (typeof value === "string") {
-      const trimmed = value.trim();
-      if (trimmed) {
-        return trimmed;
-      }
-    }
-
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return String(value);
-    }
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number") return String(value);
   }
   return null;
 }
@@ -105,103 +90,29 @@ function firstString(...values: unknown[]) {
 function firstNumber(...values: unknown[]) {
   for (const value of values) {
     if (typeof value === "number" && Number.isFinite(value)) return value;
-
     if (typeof value === "string") {
-      const normalized = value.replace(/[^0-9,.-]/g, "").replace(",", ".").trim();
-      if (!normalized) continue;
-      const parsed = Number(normalized);
+      const parsed = Number(value.replace(",", "."));
       if (Number.isFinite(parsed)) return parsed;
-    }
-
-    const record = toRecord(value);
-    if (record) {
-      const nested = firstNumber(record.amount, record.value, record.gross, record.total, record.price);
-      if (nested !== null) return nested;
     }
   }
   return null;
 }
 
-function collectObjects(input: unknown, depth = 0): UnknownRecord[] {
-  if (depth > 8) return [];
-
-  if (Array.isArray(input)) {
-    return input.flatMap((item) => collectObjects(item, depth + 1));
-  }
-
-  const record = toRecord(input);
-  if (!record) return [];
-
-  return [record, ...Object.values(record).flatMap((value) => collectObjects(value, depth + 1))];
-}
-
-function collectCandidateArrays(input: unknown, keys: string[]): UnknownRecord[] {
-  const record = toRecord(input);
-  const found: UnknownRecord[] = [];
-
-  function walk(value: unknown, depth = 0) {
-    if (depth > 8) return;
-    if (Array.isArray(value)) {
-      const records = value.map((item) => toRecord(item)).filter((item): item is UnknownRecord => Boolean(item));
-      if (records.length > 0) found.push(...records);
-      value.forEach((item) => walk(item, depth + 1));
-      return;
-    }
-    const current = toRecord(value);
-    if (!current) return;
-    for (const key of keys) {
-      const child = current[key];
-      if (Array.isArray(child)) {
-        found.push(...child.map((item) => toRecord(item)).filter((item): item is UnknownRecord => Boolean(item)));
-      }
-    }
-    Object.values(current).forEach((child) => walk(child, depth + 1));
-  }
-
-  walk(record ?? input);
-  return dedupeRecords(found);
-}
-
-function dedupeRecords(items: UnknownRecord[]) {
-  const seen = new Set<string>();
-  return items.filter((item) => {
-    const key = JSON.stringify(item);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-function getDateRangeTs() {
-  const start = new Date("2026-01-01T00:00:00Z");
-  const end = new Date();
-
-  return {
-    start_ts: Math.floor(start.getTime() / 1000),
-    end_ts: Math.floor(end.getTime() / 1000),
-  };
-}
-
 function isoWeekParts(dateInput: string) {
   const date = new Date(dateInput);
+  const temp = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = temp.getUTCDay() || 7;
+  temp.setUTCDate(temp.getUTCDate() + 4 - dayNum);
 
-  if (Number.isNaN(date.getTime())) {
-    return { week: "S1", weekValue: "1970-W01" };
-  }
+  const year = temp.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(year, 0, 1));
+  const week = Math.ceil((((temp.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  const weekString = String(week).padStart(2, "0");
 
-  const utcDate = new Date(
-    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
-  );
-
-  const day = utcDate.getUTCDay() || 7;
-  utcDate.setUTCDate(utcDate.getUTCDate() + 4 - day);
-
-  const yearStart = new Date(Date.UTC(utcDate.getUTCFullYear(), 0, 1));
-  const weekNumber = Math.ceil(
-    ((utcDate.getTime() - yearStart.getTime()) / 86400000 + 1) / 7,
-  );
-
-  return { week: `S${weekNumber}`, weekValue: `${year}-W${weekString}` };
+  return {
+    week: `S${week}`,
+    weekValue: `${year}-W${weekString}`,
+  };
 }
 
 async function parseJsonSafe(response: Response) {
@@ -211,27 +122,13 @@ async function parseJsonSafe(response: Response) {
   try {
     return JSON.parse(text);
   } catch {
-    throw new Error(`Bolt API returned non-JSON payload (${response.status}): ${text.slice(0, 180)}`);
+    throw new Error(`Bolt API returned non-JSON payload (${response.status})`);
   }
-}
-
-function isBoltOk(payload: unknown) {
-  const record = toRecord(payload);
-  const code = firstNumber(record?.code);
-  return code === null || code === 0;
 }
 
 async function requestBoltAccessToken() {
   const clientId = getEnv("BOLT_CLIENT_ID");
   const clientSecret = getEnv("BOLT_CLIENT_SECRET");
-
-  if (!clientId || !clientSecret) {
-    throw new Error("Identifiants Bolt manquants dans Vercel (BOLT_CLIENT_ID / BOLT_CLIENT_SECRET).");
-  }
-
-  if (boltTokenCache && boltTokenCache.expiresAt > Date.now() + 10000) {
-    return boltTokenCache.value;
-  }
 
   const form = new URLSearchParams({
     client_id: clientId,
@@ -242,302 +139,140 @@ async function requestBoltAccessToken() {
 
   const response = await fetch(getBoltTokenUrl(), {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
     body: form.toString(),
-    cache: "no-store",
   });
 
-  const payload = (await parseJsonSafe(response)) as BoltAccessTokenResponse | null;
-  if (!response.ok || !payload?.access_token) {
-    const detail = payload?.error_description || payload?.error || "verifie Client ID / Secret / scope";
-    throw new Error(`Bolt token request failed (${response.status}) : ${detail}`);
+  const payload = (await parseJsonSafe(response)) as BoltAccessTokenResponse;
+
+  if (!payload?.access_token) {
+    throw new Error("Impossible de récupérer token Bolt");
   }
 
   boltTokenCache = {
     value: payload.access_token,
-    expiresAt: Date.now() + ((payload.expires_in ?? 600) - 30) * 1000,
+    expiresAt: Date.now() + ((payload.expires_in ?? 600) * 1000),
   };
 
   return payload.access_token;
 }
 
-async function fetchBoltApi(path: string, method: "GET" | "POST", body?: unknown): Promise<BoltApiCall> {
-  const accessToken = await requestBoltAccessToken();
+async function getAccessToken() {
+  if (boltTokenCache && boltTokenCache.expiresAt > Date.now()) {
+    return boltTokenCache.value;
+  }
+  return requestBoltAccessToken();
+}
+
+async function fetchBoltApi(path: string, body?: unknown) {
+  const token = await getAccessToken();
+
   const response = await fetch(`${getBoltApiBaseUrl()}${path}`, {
-    method,
+    method: "POST",
     headers: {
-      Authorization: `Bearer ${accessToken}`,
+      Authorization: `Bearer ${token}`,
       Accept: "application/json",
-      ...(method !== "GET" ? { "Content-Type": "application/json" } : {}),
+      "Content-Type": "application/json",
     },
-    body: method === "POST" ? JSON.stringify(body ?? {}) : undefined,
-    cache: "no-store",
+    body: JSON.stringify(body ?? {}),
   });
 
-  const payload = await parseJsonSafe(response);
-  const message = response.ok
-    ? `${path} OK (${response.status})`
-    : `${path} FAILED (${response.status}) ${extractErrorMessage(payload)}`;
-
-  return { ok: response.ok, status: response.status, payload, message };
+  return parseJsonSafe(response);
 }
 
-function extractErrorMessage(payload: unknown) {
-  const record = toRecord(payload);
-  return firstString(record?.message, record?.error, record?.error_description, record?.detail) ?? "";
-}
+function getDateChunks() {
+  const chunks = [];
+  const start = new Date("2026-01-01T00:00:00Z");
+  const now = new Date();
 
-function getDateWindowBody(companyId: string) {
-  const to = new Date();
-  const from = new Date(Date.now() - 90 * 24 * 3600 * 1000);
-  const fromDate = from.toISOString().slice(0, 10);
-  const toDate = to.toISOString().slice(0, 10);
-  const base = companyId ? { company_id: companyId, companyId } : {};
+  let current = new Date(start);
 
-  return [
-    { ...base, date_from: fromDate, date_to: toDate },
-    { ...base, start_date: fromDate, end_date: toDate },
-    { ...base, from: fromDate, to: toDate },
-    { ...base, start: from.toISOString(), end: to.toISOString() },
-    base,
-    companyId ? { company_ids: [companyId] } : {},
-    companyId ? { companyIds: [companyId] } : {},
-  ];
-}
+  while (current < now) {
+    const end = new Date(current);
+    end.setDate(end.getDate() + 30);
 
-async function fetchCompanies(diagnostics: string[]) {
-  const result = await fetchBoltApi("/fleetIntegration/v1/getCompanies", "GET");
-  diagnostics.push(result.message);
-  if (!result.ok) return [];
+    chunks.push({
+      start_ts: Math.floor(current.getTime() / 1000),
+      end_ts: Math.floor(Math.min(end.getTime(), now.getTime()) / 1000),
+    });
 
-  const companies = collectCandidateArrays(result.payload, ["companies", "company_list", "items", "data", "result"])
-    .concat(collectObjects(result.payload))
-    .map((item) => {
-      const id = firstString(item.companyId, item.company_id, item.id, item.uuid, item.fleetId, item.fleet_id);
-      const name = firstString(item.companyName, item.company_name, item.name, item.title, item.legalName, item.legal_name);
-      return id && name ? { id, name } : null;
-    })
-    .filter((item): item is BoltCompany => Boolean(item));
-
-  return dedupeBy(companies, (company) => company.id);
-}
-
-function parseDriversFromPayload(payload: unknown, companyId: string, companyName?: string) {
-  return collectCandidateArrays(payload, ["drivers", "driver_list", "items", "data", "result", "users"])
-    .concat(collectObjects(payload))
-    .map((item): BoltDriver | null => {
-      const nestedUser = toRecord(item.user);
-      const id = firstString(item.driverId, item.driver_id, item.id, item.uuid, item.userId, item.user_id, nestedUser?.id);
-      const firstName = firstString(item.firstName, item.first_name, nestedUser?.firstName, nestedUser?.first_name);
-      const lastName = firstString(item.lastName, item.last_name, nestedUser?.lastName, nestedUser?.last_name);
-      const displayName =
-        firstString(item.name, item.fullName, item.full_name, item.displayName, item.display_name, nestedUser?.name, nestedUser?.fullName) ??
-        [firstName, lastName].filter(Boolean).join(" ").trim();
-      if (!id || !displayName) return null;
-      return {
-        id,
-        name: displayName,
-        companyId: firstString(item.companyId, item.company_id, item.fleetId, item.fleet_id) ?? companyId,
-        companyName,
-        status: firstString(item.status, item.state, item.activityStatus, item.activity_status) ?? undefined,
-      };
-    })
-    .filter((item): item is BoltDriver => item !== null);
-}
-
-async function fetchDrivers(companyId: string, companyName: string | undefined, diagnostics: string[]) {
-  for (const body of getDateWindowBody(companyId)) {
-    const result = await fetchBoltApi("/fleetIntegration/v1/getDrivers", "POST", body);
-    diagnostics.push(`${result.message} body=${JSON.stringify(body)}`);
-    if (!result.ok) continue;
-    const drivers = parseDriversFromPayload(result.payload, companyId, companyName);
-    if (drivers.length > 0) return drivers;
-  }
-  return [];
-}
-
-function resolveGrossValue(order: UnknownRecord) {
-  const financial = toRecord(order.financials) ?? toRecord(order.finance) ?? toRecord(order.payment) ?? toRecord(order.fare) ?? {};
-  return firstNumber(
-    order.grossEarnings,
-    order.gross_earnings,
-    order.totalRevenue,
-    order.total_revenue,
-    order.driverRevenue,
-    order.driver_revenue,
-    order.earnings,
-    order.revenue,
-    order.amount,
-    order.total,
-    order.price,
-    order.final_price,
-    financial.gross,
-    financial.total,
-    financial.amount,
-    financial.price,
-  ) ?? 0;
-}
-
-function resolveOrderTime(order: UnknownRecord) {
-  return firstString(
-    order.finishedAt,
-    order.finished_at,
-    order.completedAt,
-    order.completed_at,
-    order.dropoffTime,
-    order.dropoff_time,
-    order.createdAt,
-    order.created_at,
-    order.startTime,
-    order.start_time,
-    order.date,
-    order.timestamp,
-  ) ?? new Date().toISOString();
-}
-
-function parseOrdersFromPayload(payload: unknown, companyId: string, companyName?: string) {
-  return collectCandidateArrays(payload, ["orders", "rides", "trips", "items", "data", "result"])
-    .concat(collectObjects(payload))
-    .map((item): BoltOrder | null => {
-      const nestedDriver = toRecord(item.driver) ?? toRecord(item.partner_driver) ?? toRecord(item.courier);
-      const driverId = firstString(
-        item.driverId,
-        item.driver_id,
-        item.partnerDriverId,
-        item.partner_driver_id,
-        item.courierId,
-        item.courier_id,
-        item.chauffeurId,
-        item.chauffeur_id,
-        nestedDriver?.id,
-        nestedDriver?.driverId,
-        nestedDriver?.driver_id,
-        nestedDriver?.partnerDriverId,
-        item.userId,
-      );
-      const driverName = firstString(
-        item.driverName,
-        item.driver_name,
-        item.partnerDriverName,
-        item.partner_driver_name,
-        item.courierName,
-        item.courier_name,
-        item.chauffeurName,
-        item.chauffeur_name,
-        nestedDriver?.name,
-        nestedDriver?.fullName,
-        nestedDriver?.full_name,
-      );
-      const resolvedDriverId = driverId ?? (driverName ? `name:${driverName.toLowerCase().trim()}` : null);
-      if (!resolvedDriverId) return null;
-      return {
-        driverId: resolvedDriverId,
-        driverName: driverName ?? undefined,
-        companyId: firstString(item.companyId, item.company_id, item.fleetId, item.fleet_id) ?? companyId,
-        companyName,
-        gross: resolveGrossValue(item),
-        occurredAt: resolveOrderTime(item),
-      };
-    })
-    .filter((item): item is BoltOrder => item !== null);
-}
-
-async function fetchOrders(companyId: string, companyName: string | undefined, diagnostics: string[]) {
-  for (const body of getDateWindowBody(companyId)) {
-    const result = await fetchBoltApi("/fleetIntegration/v1/getFleetOrders", "POST", body);
-    diagnostics.push(`${result.message} body=${JSON.stringify(body)}`);
-    if (!result.ok) continue;
-    const orders = parseOrdersFromPayload(result.payload, companyId, companyName);
-    if (orders.length > 0) return orders;
-  }
-  return [];
-}
-
-function buildWeeklyRows(companies: BoltCompany[], drivers: BoltDriver[], orders: BoltOrder[]) {
-  const companyNameById = new Map(companies.map((company) => [company.id, company.name]));
-  const driverById = new Map(drivers.map((driver) => [driver.id, { name: driver.name, companyId: driver.companyId, companyName: driver.companyName }]));
-  const rows = new Map<string, WeeklyDriverInput>();
-  let id = 1;
-
-  for (const order of orders) {
-    const driverInfo = driverById.get(order.driverId);
-    const driverName = order.driverName ?? driverInfo?.name ?? `Chauffeur ${order.driverId.slice(-4)}`;
-    const companyId = order.companyId || driverInfo?.companyId || "bolt";
-    const companyName = order.companyName ?? driverInfo?.companyName ?? companyNameById.get(companyId) ?? "Bolt";
-    const { week, weekValue } = isoWeekParts(order.occurredAt);
-    const key = `${companyName}::${driverName}::${weekValue}`;
-    const current = rows.get(key) ?? {
-      id: syntheticId++, name: driverName, company: companyName, uber: 0, bolt: 0, heetch: 0,
-      location: 0, acompte: 0, week, weekValue, status: ACTIVITY_STATUS,
-    };
-    current.bolt = Number((current.bolt + order.gross).toFixed(2));
-    rows.set(key, current);
+    current = new Date(end);
+    current.setDate(current.getDate() + 1);
   }
 
-  return Array.from(rows.values()).sort((left, right) => left.weekValue === right.weekValue ? left.name.localeCompare(right.name, "fr") : right.weekValue.localeCompare(left.weekValue));
+  return chunks;
 }
-
-function buildFallbackRowsFromDrivers(companies: BoltCompany[], drivers: BoltDriver[]): WeeklyDriverInput[] {
-  const companyNameById = new Map(companies.map((company) => [company.id, company.name]));
-  const { week, weekValue } = isoWeekParts(new Date().toISOString());
-  let syntheticId = 1;
-  return dedupeBy(drivers, (driver) => `${driver.companyId}:${driver.id}`).map((driver) => ({
-    id: syntheticId++,
-    name: driver.name,
-    company: driver.companyName ?? companyNameById.get(driver.companyId) ?? "Bolt",
-    uber: 0,
-    bolt: 0,
-    heetch: 0,
-    location: 0,
-    acompte: 0,
-    week,
-    weekValue,
-    status: ACTIVITY_STATUS,
-  })).sort((left, right) => left.name.localeCompare(right.name, "fr"));
-}
-
-function dedupeBy<T>(items: T[], getKey: (item: T) => string) {
-  const seen = new Set<string>();
-  return items.filter((item) => {
-    const key = getKey(item);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-let boltCache: BoltSyncResult | null = null;
-let boltCacheTime = 0;
 
 export async function scrapeBoltWeeklyRevenuesResult(): Promise<BoltSyncResult> {
   const diagnostics: string[] = [];
-  const companies = await fetchCompanies(diagnostics);
-  const allDrivers: BoltDriver[] = [];
-  const allOrders: BoltOrder[] = [];
 
-  const targets = companies.length > 0 ? companies : [{ id: "", name: "Bolt" }];
-  for (const company of targets) {
-    const [drivers, orders] = await Promise.all([
-      fetchDrivers(company.id, company.name, diagnostics),
-      fetchOrders(company.id, company.name, diagnostics),
-    ]);
-    allDrivers.push(...drivers);
-    allOrders.push(...orders);
+  const companiesPayload = await fetch(`${getBoltApiBaseUrl()}/fleetIntegration/v1/getCompanies`, {
+    headers: {
+      Authorization: `Bearer ${await getAccessToken()}`,
+      Accept: "application/json",
+    },
+  });
+
+  const companiesJson = await parseJsonSafe(companiesPayload);
+  const companyIds = companiesJson?.data?.company_ids ?? [];
+
+  const rowsMap = new Map<string, WeeklyDriverInput>();
+  let syntheticId = 1;
+
+  for (const companyId of companyIds) {
+    for (const chunk of getDateChunks()) {
+      try {
+        const payload = await fetchBoltApi("/fleetIntegration/v1/getFleetOrders", {
+          company_ids: [companyId],
+          start_ts: chunk.start_ts,
+          end_ts: chunk.end_ts,
+          limit: 1000,
+          offset: 0,
+        });
+
+        const orders = payload?.data?.orders ?? [];
+
+        for (const order of orders) {
+          const driverName = order.driver_name ?? "Unknown";
+          const companyName = order.category_info?.name ?? "Bolt";
+          const amount = 0;
+          const date = new Date((order.order_created_timestamp ?? 0) * 1000).toISOString();
+          const { week, weekValue } = isoWeekParts(date);
+
+          const key = `${driverName}-${weekValue}`;
+
+          if (!rowsMap.has(key)) {
+            rowsMap.set(key, {
+              id: syntheticId++,
+              name: driverName,
+              company: companyName,
+              uber: 0,
+              bolt: 0,
+              heetch: 0,
+              location: 0,
+              acompte: 0,
+              week,
+              weekValue,
+              status: ACTIVITY_STATUS,
+            });
+          }
+
+          rowsMap.get(key)!.bolt += amount;
+        }
+      } catch (e) {
+        diagnostics.push(String(e));
+      }
+    }
   }
 
-  if (companies.length > 0 && allDrivers.length === 0 && allOrders.length === 0) {
-    const [drivers, orders] = await Promise.all([
-      fetchDrivers("", undefined, diagnostics),
-      fetchOrders("", undefined, diagnostics),
-    ]);
-    allDrivers.push(...drivers);
-    allOrders.push(...orders);
-  }
-
-  const rows = allOrders.length > 0 ? buildWeeklyRows(companies, allDrivers, allOrders) : buildFallbackRowsFromDrivers(companies, allDrivers);
-  diagnostics.push(`Bolt parsed: ${allDrivers.length} chauffeurs, ${allOrders.length} courses, ${rows.length} lignes dashboard.`);
-
-  return { rows, updatedAt: new Date().toISOString(), diagnostics };
+  return {
+    rows: Array.from(rowsMap.values()),
+    updatedAt: new Date().toISOString(),
+    diagnostics,
+  };
 }
 
 export async function scrapeBoltWeeklyRevenues() {
