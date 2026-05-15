@@ -1,8 +1,6 @@
 const ACTIVITY_STATUS = "Actif" as const;
 
-type UnknownRecord = Record<string, unknown>;
-
-export type WeeklyDriverInput = {
+type WeeklyDriverInput = {
   id: number;
   name: string;
   company: string;
@@ -16,32 +14,11 @@ export type WeeklyDriverInput = {
   status: "Actif";
 };
 
+export type { WeeklyDriverInput };
+
 type BoltAccessTokenResponse = {
   access_token?: string;
   expires_in?: number;
-  error?: string;
-  error_description?: string;
-};
-
-type BoltCompany = {
-  id: string;
-  name: string;
-};
-
-type BoltDriver = {
-  id: string;
-  name: string;
-  companyId: string;
-  companyName?: string;
-};
-
-type BoltOrder = {
-  driverId: string;
-  driverName?: string;
-  companyId: string;
-  companyName?: string;
-  gross: number;
-  occurredAt: string;
 };
 
 type BoltSyncResult = {
@@ -66,35 +43,26 @@ function getBoltTokenUrl() {
 }
 
 function getBoltApiBaseUrl() {
-  return (getEnv("BOLT_API_BASE_URL") || "https://node.bolt.eu/fleet-integration-gateway").replace(/\/$/, "");
+  return (
+    getEnv("BOLT_API_BASE_URL") ||
+    "https://node.bolt.eu/fleet-integration-gateway"
+  ).replace(/\/$/, "");
 }
 
 function getBoltScope() {
   return getEnv("BOLT_API_SCOPE") || "fleet-integration:api";
 }
 
-function toRecord(value: unknown): UnknownRecord | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as UnknownRecord)
-    : null;
-}
-
-function firstString(...values: unknown[]) {
-  for (const value of values) {
-    if (typeof value === "string" && value.trim()) return value.trim();
-    if (typeof value === "number") return String(value);
-  }
-  return null;
-}
-
 function firstNumber(...values: unknown[]) {
   for (const value of values) {
     if (typeof value === "number" && Number.isFinite(value)) return value;
+
     if (typeof value === "string") {
       const parsed = Number(value.replace(",", "."));
       if (Number.isFinite(parsed)) return parsed;
     }
   }
+
   return null;
 }
 
@@ -117,6 +85,7 @@ function isoWeekParts(dateInput: string) {
 
 async function parseJsonSafe(response: Response) {
   const text = await response.text();
+
   if (!text.trim()) return null;
 
   try {
@@ -144,6 +113,7 @@ async function requestBoltAccessToken() {
       Accept: "application/json",
     },
     body: form.toString(),
+    cache: "no-store",
   });
 
   const payload = (await parseJsonSafe(response)) as BoltAccessTokenResponse;
@@ -154,7 +124,7 @@ async function requestBoltAccessToken() {
 
   boltTokenCache = {
     value: payload.access_token,
-    expiresAt: Date.now() + ((payload.expires_in ?? 600) * 1000),
+    expiresAt: Date.now() + ((payload.expires_in ?? 600) - 30) * 1000,
   };
 
   return payload.access_token;
@@ -164,6 +134,7 @@ async function getAccessToken() {
   if (boltTokenCache && boltTokenCache.expiresAt > Date.now()) {
     return boltTokenCache.value;
   }
+
   return requestBoltAccessToken();
 }
 
@@ -178,17 +149,16 @@ async function fetchBoltApi(path: string, body?: unknown) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body ?? {}),
+    cache: "no-store",
   });
 
   return parseJsonSafe(response);
 }
 
 function getDateChunks() {
-  const chunks = [];
-  const start = new Date("2026-01-01T00:00:00Z");
+  const chunks: Array<{ start_ts: number; end_ts: number }> = [];
   const now = new Date();
-
-  let current = new Date(start);
+  let current = new Date("2026-01-01T00:00:00Z");
 
   while (current < now) {
     const end = new Date(current);
@@ -200,24 +170,43 @@ function getDateChunks() {
     });
 
     current = new Date(end);
-    current.setDate(current.getDate() + 1);
+    current.setSeconds(current.getSeconds() + 1);
   }
 
   return chunks;
 }
 
+function getOrderAmount(order: any) {
+  return (
+    firstNumber(
+      order?.order_price?.net_earnings,
+      order?.order_price?.ride_price,
+      order?.order_price?.booking_fee,
+      order?.order_price?.cancellation_fee,
+      order?.order_price?.tip,
+      order?.price,
+      order?.amount,
+      order?.total
+    ) ?? 0
+  );
+}
+
 export async function scrapeBoltWeeklyRevenuesResult(): Promise<BoltSyncResult> {
   const diagnostics: string[] = [];
 
-  const companiesPayload = await fetch(`${getBoltApiBaseUrl()}/fleetIntegration/v1/getCompanies`, {
-    headers: {
-      Authorization: `Bearer ${await getAccessToken()}`,
-      Accept: "application/json",
-    },
-  });
+  const companiesResponse = await fetch(
+    `${getBoltApiBaseUrl()}/fleetIntegration/v1/getCompanies`,
+    {
+      headers: {
+        Authorization: `Bearer ${await getAccessToken()}`,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    }
+  );
 
-  const companiesJson = await parseJsonSafe(companiesPayload);
-  const companyIds = companiesJson?.data?.company_ids ?? [];
+  const companiesJson = await parseJsonSafe(companiesResponse);
+  const companyIds: number[] = companiesJson?.data?.company_ids ?? [];
 
   const rowsMap = new Map<string, WeeklyDriverInput>();
   let syntheticId = 1;
@@ -236,13 +225,20 @@ export async function scrapeBoltWeeklyRevenuesResult(): Promise<BoltSyncResult> 
         const orders = payload?.data?.orders ?? [];
 
         for (const order of orders) {
-          const driverName = order.driver_name ?? "Unknown";
-          const companyName = order.category_info?.name ?? "Bolt";
-          const amount = 0;
-          const date = new Date((order.order_created_timestamp ?? 0) * 1000).toISOString();
+          const driverName = order?.driver_name ?? "Unknown";
+          const companyName = order?.category_info?.name ?? `Bolt Fleet ${companyId}`;
+          const amount = getOrderAmount(order);
+
+          const timestamp =
+            order?.order_finished_timestamp ??
+            order?.order_drop_off_timestamp ??
+            order?.order_created_timestamp ??
+            Math.floor(Date.now() / 1000);
+
+          const date = new Date(timestamp * 1000).toISOString();
           const { week, weekValue } = isoWeekParts(date);
 
-          const key = `${driverName}-${weekValue}`;
+          const key = `${companyName}-${driverName}-${weekValue}`;
 
           if (!rowsMap.has(key)) {
             rowsMap.set(key, {
@@ -260,10 +256,13 @@ export async function scrapeBoltWeeklyRevenuesResult(): Promise<BoltSyncResult> 
             });
           }
 
-          rowsMap.get(key)!.bolt += amount;
+          const row = rowsMap.get(key)!;
+          row.bolt = Number((row.bolt + amount).toFixed(2));
         }
-      } catch (e) {
-        diagnostics.push(String(e));
+
+        await new Promise((resolve) => setTimeout(resolve, 600));
+      } catch (error) {
+        diagnostics.push(String(error));
       }
     }
   }
