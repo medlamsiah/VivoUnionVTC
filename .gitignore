@@ -51,3 +51,9 @@ Thumbs.db
 # =========================
 .cache/
 tsconfig.tsbuildinfo
+*.csv
+uber-session.json
+uber-page-text.txt
+uber-current-url.txt
+uber-data.json
+uber-revenues.json

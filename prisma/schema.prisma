@@ -64,3 +64,56 @@ model LocationTypePricing {
 
   @@index([sortOrder])
 }
+model PlatformWeeklyRevenue {
+  id            String   @id @default(cuid())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  platform      String   // uber, bolt, heetch
+  driverName    String
+  driverNameKey String
+  company       String
+  weekValue     String
+  week          String
+
+  gross         Float    @default(0)
+  net           Float    @default(0)
+  payout        Float    @default(0)
+  adjustments   Float    @default(0)
+  reimbursements Float   @default(0)
+
+  @@unique([platform, driverNameKey, weekValue])
+  @@index([platform])
+  @@index([driverName])
+  @@index([weekValue])
+}
+model UberDriverRevenueSnapshot {
+  id            String   @id @default(cuid())
+  createdAt     DateTime @default(now())
+
+  snapshotDate  DateTime
+  periodStart   DateTime
+  periodEnd     DateTime
+
+  driverUuid    String
+  driverName    String
+  driverNameKey String
+
+  totalRevenue  Float @default(0)
+  netTripPrice  Float @default(0)
+  bonus         Float @default(0)
+  reimbursements Float @default(0)
+  payouts       Float @default(0)
+  bankTransfers Float @default(0)
+  cashCollected Float @default(0)
+  thirdPartyPaid Float @default(0)
+  tolls         Float @default(0)
+  postTripAdjustments Float @default(0)
+  tips          Float @default(0)
+  otherAdjustments Float @default(0)
+
+  @@unique([snapshotDate, periodStart, periodEnd, driverUuid])
+  @@index([driverName])
+  @@index([snapshotDate])
+  @@index([periodStart, periodEnd])
+}
