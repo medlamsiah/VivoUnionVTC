@@ -57,3 +57,9 @@ uber-page-text.txt
 uber-current-url.txt
 uber-data.json
 uber-revenues.json
+scripts/uber-login.ts
+scripts/uber-scrape.ts
+uber-session.json
+*.csv
+uber-*.json
+uber-*.txt

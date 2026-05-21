@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
 
 import {
   buildDriverWeeklyDashboardRows,
   listDriverWeeklyLocationSettings,
   listLocationTypePricings,
 } from "@/lib/driver-weekly-settings";
-import { readWeeklyRevenuesSnapshot, scrapeWeeklyRevenuesResult } from "@/lib/integrations/weekly-revenues";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,75 +13,64 @@ export const maxDuration = 120;
 
 export async function GET() {
   try {
-    let result = readWeeklyRevenuesSnapshot();
-
-    // On a fresh production deployment there is no snapshot yet.
-    // In that case, try one live sync so the admin is immediately usable.
-    if (result.drivers.length === 0) {
-      try {
-        result = await withTimeout(scrapeWeeklyRevenuesResult(), 120_000);
-      } catch (syncError) {
-        console.warn("Weekly revenues snapshot missing and live sync failed.", syncError);
-      }
-    }
-
-    const [locationSettings, locationTypePricings] = await Promise.all([
+    const [locationSettings, locationTypePricings, uberSnapshots] = await Promise.all([
       listDriverWeeklyLocationSettings(),
       listLocationTypePricings(),
+      prisma.uberDriverRevenueSnapshot.findMany({
+        orderBy: {
+          snapshotDate: "desc",
+        },
+      }),
     ]);
-    const drivers = buildDriverWeeklyDashboardRows(result.drivers, locationSettings, locationTypePricings);
-    return NextResponse.json({ ...result, drivers });
+
+    const uberMap = new Map<string, number>();
+
+    for (const snap of uberSnapshots) {
+      const key = snap.driverNameKey?.trim().toLowerCase();
+      if (!key) continue;
+
+      uberMap.set(key, (uberMap.get(key) || 0) + snap.totalRevenue);
+    }
+
+    const baseDrivers = locationSettings.map((driver) => ({
+      id: driver.driverId,
+      name: driver.driverName,
+      company: driver.companyName || "",
+      uber: uberMap.get(driver.driverName.trim().toLowerCase()) || 0,
+      bolt: 0,
+      heetch: 0,
+      location: 0,
+      acompte: 0,
+      week: "S21",
+      weekValue: "2026-W21",
+      status: "Actif",
+      vehicleType: null,
+    }));
+
+    const drivers = buildDriverWeeklyDashboardRows(
+      baseDrivers,
+      locationSettings,
+      locationTypePricings
+    );
+
+    return NextResponse.json({
+      drivers,
+      syncStatuses: [],
+    });
   } catch (error) {
-    console.error("Failed to serve weekly platform revenues.", error);
+    console.error("Failed to load dashboard revenues:", error);
 
     return NextResponse.json(
       {
         drivers: [],
         syncStatuses: [],
-        error: "Unable to load weekly revenues right now.",
+        error: "Unable to load revenues.",
       },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
 
 export async function POST() {
-  try {
-    const result = await withTimeout(scrapeWeeklyRevenuesResult(), 120_000);
-    const [locationSettings, locationTypePricings] = await Promise.all([
-      listDriverWeeklyLocationSettings(),
-      listLocationTypePricings(),
-    ]);
-    const drivers = buildDriverWeeklyDashboardRows(result.drivers, locationSettings, locationTypePricings);
-    return NextResponse.json({ ...result, drivers });
-  } catch (error) {
-    console.error("Failed to refresh weekly platform revenues.", error);
-
-    return NextResponse.json(
-      {
-        drivers: [],
-        syncStatuses: [],
-        error: "Unable to refresh weekly revenues right now.",
-      },
-      { status: 500 },
-    );
-  }
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  let timeoutId: NodeJS.Timeout | undefined;
-
-  const timeoutPromise = new Promise<T>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error(`Request timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-  });
-
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-  }
+  return GET();
 }
