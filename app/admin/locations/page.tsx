@@ -655,7 +655,6 @@ export default async function AdminLocationsPage({ searchParams }: AdminLocation
                         <table className="min-w-full text-sm">
                           <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-[0.18em] text-slate-500">
                             <tr>
-                              <th className="px-5 py-4 font-semibold">Campagne</th>
                               <th className="px-5 py-4 font-semibold">Uber</th>
                               <th className="px-5 py-4 font-semibold">Bolt</th>
                               <th className="px-5 py-4 font-semibold">Heetch</th>
@@ -667,7 +666,6 @@ export default async function AdminLocationsPage({ searchParams }: AdminLocation
                           <tbody>
                             {selectedTechnicalRows.map((row) => (
                               <tr key={`${row.company}-${row.weekValue}`} className="border-t border-slate-100">
-                                <td className="px-5 py-4 font-semibold text-slate-900">{row.company}</td>
                                 <td className="px-5 py-4 text-slate-700">{formatCurrency(row.uber)}</td>
                                 <td className="px-5 py-4 text-slate-700">{formatCurrency(row.bolt)}</td>
                                 <td className="px-5 py-4 text-slate-700">{formatCurrency(row.heetch)}</td>

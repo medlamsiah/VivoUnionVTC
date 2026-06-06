@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { chromium, type Page } from "playwright";
 import type { WeeklyDriverInput } from "@/lib/integrations/bolt-scraper";
+import { saveUberSession } from "@/lib/integrations/uber-session";
 
 type ScrapedUberDriverRow = {
   name: string;
@@ -36,14 +37,15 @@ type UberEarnerBreakdown = {
 const DEFAULT_LOCATION_AMOUNT = 0;
 const DEFAULT_ACOMPTE_AMOUNT = 0;
 const UBER_GRAPHQL_URL = "https://supplier.uber.com/graphql";
-const UBER_SUPPLIER_UUID = getEnvValue("UBER_SUPPLIER_UUID") || "20a91cc4-45d1-4fde-b11a-d05be3ac481a";
+const DEFAULT_UBER_SUPPLIER_UUID = "20a91cc4-45d1-4fde-b11a-d05be3ac481a";
 const UBER_X_CSRF_TOKEN = getEnvValue("UBER_X_CSRF_TOKEN") || "x";
 const UBER_COMPANY_LABEL = "Aliroute - Uber";
 const UBER_CACHE_DIR = path.join(process.cwd(), ".cache");
 const UBER_CACHE_FILE = path.join(UBER_CACHE_DIR, "uber-weekly-revenues.json");
 const UBER_SESSION_FILE = path.join(UBER_CACHE_DIR, "uber-session-cookie.txt");
+const UBER_STORAGE_STATE_FILE = path.join(UBER_CACHE_DIR, "uber-storage-state.json");
+const UBER_SUPPLIER_UUID_FILE = path.join(UBER_CACHE_DIR, "uber-supplier-uuid.txt");
 const UBER_STATUS_FILE = path.join(UBER_CACHE_DIR, "uber-sync-status.json");
-const UBER_EARNINGS_URL = `https://supplier.uber.com/orgs/${UBER_SUPPLIER_UUID}/earnings`;
 
 const GET_EARNER_BREAKDOWNS_QUERY = `
   query getEarnerBreakdownsV2(
@@ -292,6 +294,7 @@ async function fetchUberWeek(
 ): Promise<ScrapedUberDriverRow[]> {
   const rows: ScrapedUberDriverRow[] = [];
   let pageToken: string | null = null;
+  const supplierUuid = resolveUberSupplierUuid();
 
   do {
     const response = await fetch(UBER_GRAPHQL_URL, {
@@ -301,7 +304,7 @@ async function fetchUberWeek(
         "accept-language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
         "content-type": "application/json",
         origin: "https://supplier.uber.com",
-        referer: `https://supplier.uber.com/orgs/${UBER_SUPPLIER_UUID}/earnings`,
+        referer: getUberEarningsUrl(supplierUuid),
         cookie: cookieHeader,
         "x-csrf-token": UBER_X_CSRF_TOKEN,
       },
@@ -309,7 +312,7 @@ async function fetchUberWeek(
         operationName: "getEarnerBreakdownsV2",
         query: GET_EARNER_BREAKDOWNS_QUERY,
         variables: {
-          supplierUuid: UBER_SUPPLIER_UUID,
+          supplierUuid,
           timeRange: {
             unixMilliOrDate: "Unix_Time_Range",
             startTimeUnixMillis: String(new Date(`${startDate}T00:00:00.000Z`).getTime()),
@@ -503,8 +506,47 @@ function getEnvValue(key: string): string | null {
   return null;
 }
 
-async function resolveUberCookieHeader(): Promise<string | null> {
-  const envCookie = getEnvValue("UBER_COOKIE");
+export function resolveUberSupplierUuid(): string {
+  const cachedUuid = loadCachedSupplierUuid();
+  if (cachedUuid) {
+    return cachedUuid;
+  }
+
+  return getEnvValue("UBER_SUPPLIER_UUID") || DEFAULT_UBER_SUPPLIER_UUID;
+}
+
+function getUberEarningsUrl(supplierUuid = resolveUberSupplierUuid()): string {
+  return `https://supplier.uber.com/orgs/${supplierUuid}/earnings`;
+}
+
+async function captureAndSaveSupplierUuid(page: Page): Promise<string | null> {
+  const uuidFromUrl = extractSupplierUuid(page.url());
+  if (uuidFromUrl) {
+    saveCachedSupplierUuid(uuidFromUrl);
+    return uuidFromUrl;
+  }
+
+  const uuidFromPage = await page
+    .locator('a[href*="/orgs/"]')
+    .first()
+    .getAttribute("href", { timeout: 5_000 })
+    .then((href) => extractSupplierUuid(href ?? ""))
+    .catch(() => null);
+
+  if (uuidFromPage) {
+    saveCachedSupplierUuid(uuidFromPage);
+  }
+
+  return uuidFromPage;
+}
+
+function extractSupplierUuid(value: string): string | null {
+  const match = value.match(/\/orgs\/([^/?#]+)/);
+  return match?.[1] ?? null;
+}
+
+export async function resolveUberCookieHeader(options: { skipEnvCookie?: boolean } = {}): Promise<string | null> {
+  const envCookie = options.skipEnvCookie ? null : getEnvValue("UBER_COOKIE");
   if (envCookie) {
     return envCookie;
   }
@@ -517,7 +559,7 @@ async function resolveUberCookieHeader(): Promise<string | null> {
   return loginAndCaptureUberCookie();
 }
 
-async function loginAndCaptureUberCookie(): Promise<string | null> {
+export async function loginAndCaptureUberCookie(): Promise<string | null> {
   const email = getEnvValue("UBER_EMAIL");
   const password = getEnvValue("UBER_PASSWORD");
 
@@ -530,12 +572,10 @@ async function loginAndCaptureUberCookie(): Promise<string | null> {
 
   try {
     browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage({
-      viewport: { width: 1440, height: 960 },
-      locale: "fr-FR",
-    });
+    const context = await browser.newContext(getUberBrowserContextOptions());
+    const page = await context.newPage();
 
-    await page.goto(UBER_EARNINGS_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.goto(getUberEarningsUrl(), { waitUntil: "domcontentloaded", timeout: 30_000 });
     await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
 
     if (!page.url().includes("supplier.uber.com")) {
@@ -549,8 +589,13 @@ async function loginAndCaptureUberCookie(): Promise<string | null> {
     await page.waitForURL((url) => url.toString().includes("supplier.uber.com"), {
       timeout: 30_000,
     });
-    await page.goto(UBER_EARNINGS_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.goto(getUberEarningsUrl(), { waitUntil: "domcontentloaded", timeout: 30_000 });
     await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
+    await captureAndSaveSupplierUuid(page);
+
+    if (!isAuthenticatedSupplierUrl(new URL(page.url()))) {
+      throw new Error("Uber login did not finish on an authenticated Supplier page.");
+    }
 
     const cookies = await page.context().cookies();
     const cookieHeader = cookies
@@ -563,6 +608,7 @@ async function loginAndCaptureUberCookie(): Promise<string | null> {
     }
 
     saveCachedSessionCookie(cookieHeader);
+    await saveUberStorageState(page);
     console.log("Uber automatic login OK");
     return cookieHeader;
   } catch (error) {
@@ -571,6 +617,206 @@ async function loginAndCaptureUberCookie(): Promise<string | null> {
   } finally {
     await browser?.close().catch(() => undefined);
   }
+}
+
+export async function fetchUberGraphqlFromAuthenticatedBrowser(body: unknown): Promise<{
+  ok: boolean;
+  status: number;
+  text: string;
+}> {
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
+
+  try {
+    browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext(getUberBrowserContextOptions());
+    const page = await context.newPage();
+
+    await openAuthenticatedUberEarningsPage(page);
+
+    return await page.evaluate(async (requestBody) => {
+      const response = await fetch("/graphql", {
+        method: "POST",
+        headers: {
+          accept: "*/*",
+          "content-type": "application/json",
+          "x-csrf-token": "x",
+        },
+        body: JSON.stringify(requestBody),
+        credentials: "include",
+      });
+
+      return {
+        ok: response.ok,
+        status: response.status,
+        text: await response.text(),
+      };
+    }, body);
+  } finally {
+    await browser?.close().catch(() => undefined);
+  }
+}
+
+export async function openInteractiveUberLoginAndCaptureCookie(): Promise<boolean> {
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
+
+  try {
+    browser = await chromium.launch({
+      headless: false,
+    });
+    const context = await browser.newContext(getUberBrowserContextOptions({ ignoreSavedState: true }));
+    const page = await context.newPage();
+
+    await page.goto("https://supplier.uber.com/", { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.waitForURL(isAuthenticatedSupplierUrl, {
+      timeout: 300_000,
+    });
+    await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => undefined);
+    const supplierUuid = await captureAndSaveSupplierUuid(page);
+
+    if (!supplierUuid || !isAuthenticatedSupplierUrl(new URL(page.url()))) {
+      return false;
+    }
+
+    const cookies = await page.context().cookies();
+    const cookieHeader = cookies
+      .filter((cookie) => cookie.domain.includes("uber.com"))
+      .map((cookie) => `${cookie.name}=${cookie.value}`)
+      .join("; ");
+
+    if (!cookieHeader) {
+      return false;
+    }
+
+    saveCachedSessionCookie(cookieHeader);
+    await saveUberStorageState(page);
+    await saveUberSession({
+      cookie: cookieHeader,
+      orgUuid: supplierUuid,
+      csrfToken: UBER_X_CSRF_TOKEN,
+    });
+    return true;
+  } catch (error) {
+    console.error("Interactive Uber login failed.", error);
+    return false;
+  } finally {
+    await browser?.close().catch(() => undefined);
+  }
+}
+
+function isAuthenticatedSupplierUrl(url: URL): boolean {
+  return url.hostname === "supplier.uber.com" && url.pathname.includes("/orgs/");
+}
+
+async function openAuthenticatedUberEarningsPage(page: Page): Promise<void> {
+  const email = getEnvValue("UBER_EMAIL");
+  const password = getEnvValue("UBER_PASSWORD");
+
+  if (!email || !password) {
+    throw new Error("Uber credentials are missing for automatic login.");
+  }
+
+  const cachedCookie = loadCachedSessionCookie();
+  if (cachedCookie) {
+    await addCookieHeaderToBrowserContext(page, cachedCookie);
+  }
+
+  await page.goto(getUberEarningsUrl(), { waitUntil: "domcontentloaded", timeout: 30_000 });
+  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
+
+  if (!page.url().includes("supplier.uber.com")) {
+    await fillFirstVisible(page, uberEmailSelectors, email);
+    await clickFirstVisible(page, uberContinueSelectors);
+    await page.waitForTimeout(1_500);
+    await fillFirstVisible(page, uberPasswordSelectors, password);
+    await clickFirstVisible(page, uberSubmitSelectors);
+  }
+
+  await page.waitForURL((url) => url.toString().includes("supplier.uber.com"), {
+    timeout: 30_000,
+  });
+  await page.goto(getUberEarningsUrl(), { waitUntil: "domcontentloaded", timeout: 30_000 });
+  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
+  await captureAndSaveSupplierUuid(page);
+
+  if (!isAuthenticatedSupplierUrl(new URL(page.url()))) {
+    throw new Error("Uber session is not authenticated on Supplier.");
+  }
+
+  const cookies = await page.context().cookies();
+  const cookieHeader = cookies
+    .filter((cookie) => cookie.domain.includes("uber.com"))
+    .map((cookie) => `${cookie.name}=${cookie.value}`)
+    .join("; ");
+
+  if (cookieHeader) {
+    saveCachedSessionCookie(cookieHeader);
+    await saveUberStorageState(page);
+  }
+}
+
+function getUberBrowserContextOptions(options: { ignoreSavedState?: boolean } = {}): {
+  viewport: { width: number; height: number };
+  locale: string;
+  storageState?: string;
+} {
+  const contextOptions: {
+    viewport: { width: number; height: number };
+    locale: string;
+    storageState?: string;
+  } = {
+    viewport: { width: 1440, height: 960 },
+    locale: "fr-FR",
+  };
+
+  if (!options.ignoreSavedState && fs.existsSync(UBER_STORAGE_STATE_FILE)) {
+    contextOptions.storageState = UBER_STORAGE_STATE_FILE;
+  }
+
+  return contextOptions;
+}
+
+async function saveUberStorageState(page: Page): Promise<void> {
+  if (!fs.existsSync(UBER_CACHE_DIR)) {
+    fs.mkdirSync(UBER_CACHE_DIR, { recursive: true });
+  }
+
+  await page.context().storageState({ path: UBER_STORAGE_STATE_FILE });
+}
+
+async function addCookieHeaderToBrowserContext(page: Page, cookieHeader: string): Promise<void> {
+  const cookies = cookieHeader
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const separatorIndex = part.indexOf("=");
+      if (separatorIndex <= 0) {
+        return null;
+      }
+
+      return {
+        name: part.slice(0, separatorIndex),
+        value: part.slice(separatorIndex + 1),
+      };
+    })
+    .filter((cookie): cookie is { name: string; value: string } => Boolean(cookie));
+
+  if (cookies.length === 0) {
+    return;
+  }
+
+  await page.context().addCookies(
+    cookies.flatMap((cookie) => [
+      {
+        ...cookie,
+        url: "https://supplier.uber.com",
+      },
+      {
+        ...cookie,
+        url: "https://account.uber.com",
+      },
+    ]),
+  );
 }
 
 async function fillFirstVisible(page: Page, selectors: string[], value: string): Promise<void> {
@@ -606,6 +852,29 @@ function saveCachedSessionCookie(cookieHeader: string): void {
   }
 }
 
+function saveCachedSupplierUuid(supplierUuid: string): void {
+  try {
+    fs.mkdirSync(UBER_CACHE_DIR, { recursive: true });
+    fs.writeFileSync(UBER_SUPPLIER_UUID_FILE, supplierUuid, "utf8");
+  } catch (error) {
+    console.error("Unable to save Uber supplier UUID cache.", error);
+  }
+}
+
+function loadCachedSupplierUuid(): string | null {
+  try {
+    if (!fs.existsSync(UBER_SUPPLIER_UUID_FILE)) {
+      return null;
+    }
+
+    const supplierUuid = fs.readFileSync(UBER_SUPPLIER_UUID_FILE, "utf8").trim();
+    return supplierUuid || null;
+  } catch (error) {
+    console.error("Unable to load Uber supplier UUID cache.", error);
+    return null;
+  }
+}
+
 function loadCachedSessionCookie(): string | null {
   try {
     if (!fs.existsSync(UBER_SESSION_FILE)) {
@@ -637,8 +906,11 @@ function isUberSessionError(error: unknown): boolean {
 const uberEmailSelectors = [
   'input[type="email"]',
   'input[name="email"]',
+  'input[id="PHONE_NUMBER_or_EMAIL_ADDRESS"]',
+  'input[name="PHONE_NUMBER_or_EMAIL_ADDRESS"]',
   'input[id*="email"]',
   'input[autocomplete="username"]',
+  'input[type="text"]',
 ];
 
 const uberPasswordSelectors = [

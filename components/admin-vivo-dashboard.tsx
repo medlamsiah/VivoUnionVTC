@@ -6,6 +6,8 @@ import { useEffect, useMemo, useState, useTransition, type ReactNode } from "rea
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import type { PlatformSyncStatus } from "@/lib/integrations/weekly-revenues";
+import type { UberEarningDto, UberEarningsSummary } from "@/lib/integrations/uber-earnings";
+import type { UberSessionStatus } from "@/lib/integrations/uber-session";
 import {
   formatCurrency,
   formatPercent,
@@ -18,6 +20,9 @@ type AdminVivoDashboardProps = {
   dashboard: VivoDashboardData;
   initialDate: string;
   syncStatuses: PlatformSyncStatus[];
+  uberEarnings: UberEarningDto[];
+  uberSummary: UberEarningsSummary;
+  uberSessionStatus: UberSessionStatus;
   leads: Array<{
     id: string;
     createdAt: string;
@@ -40,12 +45,21 @@ type AdminVivoDashboardProps = {
 };
 
 type ViewMode = "separate" | "merged" | "both";
-type ActiveTable = "charts" | "detailed" | "merged" | "monthly" | "leads";
+type ActiveTable = "charts" | "detailed" | "merged" | "monthly" | "uber" | "leads";
 
 const PAGE_SIZE = 10;
 const chartPalette = ["#0f766e", "#14b8a6", "#0f172a", "#f59e0b", "#0ea5e9", "#f97316"];
 
-export function AdminVivoDashboard({ dashboard, initialDate, syncStatuses, leadStats, leads }: AdminVivoDashboardProps) {
+export function AdminVivoDashboard({
+  dashboard,
+  initialDate,
+  syncStatuses,
+  uberEarnings,
+  uberSummary,
+  uberSessionStatus,
+  leadStats,
+  leads,
+}: AdminVivoDashboardProps) {
   const defaultWeekValue = useMemo(() => {
     if (dashboard.weekOptions.length === 0) {
       return getWeekValueFromDate(initialDate);
@@ -67,12 +81,14 @@ export function AdminVivoDashboard({ dashboard, initialDate, syncStatuses, leadS
   const [detailedPage, setDetailedPage] = useState(1);
   const [mergedPage, setMergedPage] = useState(1);
   const [monthlyPage, setMonthlyPage] = useState(1);
+  const [uberPage, setUberPage] = useState(1);
   const [leadPage, setLeadPage] = useState(1);
 
   useEffect(() => {
     setDetailedPage(1);
     setMergedPage(1);
     setMonthlyPage(1);
+    setUberPage(1);
     setLeadPage(1);
   }, [selectedStartDate, selectedEndDate, selectedDriver, selectedCampaign, activeTable]);
 
@@ -119,15 +135,10 @@ export function AdminVivoDashboard({ dashboard, initialDate, syncStatuses, leadS
       : 0;
 
   const visibleDriversCount = new Set(filteredWeeklyRows.map((row) => row.name)).size;
-  const visibleCompanies = Array.from(new Set(filteredWeeklyRows.map((row) => row.company))).sort((a, b) => a.localeCompare(b));
   const totalDriverCount = new Set(dashboard.weeklyRows.map((row) => row.name)).size;
   const totalLineCount = dashboard.weeklyRows.length;
   const availableCampaignOptions = getAvailableCampaignOptions(dashboard.weeklyRows);
   const nonLiveStatuses = syncStatuses.filter((status) => status.state !== "live");
-  const companySummaries = dashboard.companyOptions.map((company) => ({
-    company,
-    count: dashboard.weeklyRows.filter((row) => row.company === company).length,
-  }));
 
   const topDriversChartRows = [...mergedWeeklyRows]
     .sort((a, b) => b.totalBrut - a.totalBrut)
@@ -157,6 +168,7 @@ export function AdminVivoDashboard({ dashboard, initialDate, syncStatuses, leadS
   const paginatedDetailedRows = paginate(mergedWeeklyRows, detailedPage, PAGE_SIZE);
   const paginatedMergedRows = paginate(mergedWeeklyRows, mergedPage, PAGE_SIZE);
   const paginatedMonthlyRows = paginate(mergedMonthlyRows, monthlyPage, PAGE_SIZE);
+  const paginatedUberEarnings = paginate(uberEarnings, uberPage, PAGE_SIZE);
   const paginatedLeads = paginate(leads, leadPage, 12);
   const leadPlatformsSummary = useMemo(() => {
     const counters = new Map<string, number>();
@@ -267,6 +279,13 @@ export function AdminVivoDashboard({ dashboard, initialDate, syncStatuses, leadS
           <KpiCard label="Commission moyenne" value={formatCurrency(averageCommission)} helper="Moyenne sur les lignes affichees" />
         </div>
 
+        <div className="mt-4 grid gap-4 md:grid-cols-4">
+          <KpiCard label="Session Uber" value={formatUberSessionStatus(uberSessionStatus.status)} helper={uberSessionStatusMessage(uberSessionStatus)} />
+          <KpiCard label="Total revenus Uber" value={formatCurrency(uberSummary.totalRevenue)} helper={`${uberSummary.totalRows} lignes stockees en DB`} />
+          <KpiCard label="Chauffeurs Uber" value={String(uberSummary.driversCount)} helper="Chauffeurs distincts stockes" />
+          <KpiCard label="Derniere synchronisation" value={formatShortDateTime(uberSummary.lastSyncAt)} helper="Source: base de donnees" />
+        </div>
+
         {nonLiveStatuses.length > 0 ? (
           <div className="mt-6 rounded-[26px] border border-amber-200 bg-amber-50/90 p-4 shadow-[0_10px_30px_rgba(245,158,11,0.08)]">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -309,6 +328,9 @@ export function AdminVivoDashboard({ dashboard, initialDate, syncStatuses, leadS
                 <SidebarNavButton active={activeTable === "monthly"} onClick={() => setActiveTable("monthly")}>
                   Releve mensuel
                 </SidebarNavButton>
+                <SidebarNavButton active={activeTable === "uber"} onClick={() => setActiveTable("uber")}>
+                  Revenus Uber
+                </SidebarNavButton>
                 <SidebarNavButton active={activeTable === "leads"} onClick={() => setActiveTable("leads")}>
                   Candidatures
                 </SidebarNavButton>
@@ -325,6 +347,8 @@ export function AdminVivoDashboard({ dashboard, initialDate, syncStatuses, leadS
                   Export Excel
                 </a>
                 <ManualSyncButton className="inline-flex items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-500" />
+                <UberBackfillButton className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800" />
+                <UberIdentifyButton className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-emerald-200 hover:text-emerald-700" />
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2 xl:hidden">
@@ -339,6 +363,9 @@ export function AdminVivoDashboard({ dashboard, initialDate, syncStatuses, leadS
                 </NavTab>
                 <NavTab active={activeTable === "monthly"} onClick={() => setActiveTable("monthly")}>
                   Releve mensuel
+                </NavTab>
+                <NavTab active={activeTable === "uber"} onClick={() => setActiveTable("uber")}>
+                  Revenus Uber
                 </NavTab>
                 <NavTab active={activeTable === "leads"} onClick={() => setActiveTable("leads")}>
                   Candidatures
@@ -356,6 +383,8 @@ export function AdminVivoDashboard({ dashboard, initialDate, syncStatuses, leadS
                   Export Excel
                 </a>
                 <ManualSyncButton className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500" />
+                <UberBackfillButton className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800" />
+                <UberIdentifyButton className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-emerald-200 hover:text-emerald-700" />
               </div>
 
               <div className="mt-5 rounded-[22px] border border-slate-200 bg-slate-50 p-4">
@@ -419,7 +448,7 @@ export function AdminVivoDashboard({ dashboard, initialDate, syncStatuses, leadS
             ) : null}
 
             {activeTable === "merged" ? (
-              <TableSection title="Vue fusionnee par chauffeur" subtitle="Aggregation des societes sur la semaine choisie" totalItems={mergedWeeklyRows.length}>
+              <TableSection title="Vue fusionnee par chauffeur" subtitle="Aggregation des revenus sur la semaine choisie" totalItems={mergedWeeklyRows.length}>
                 <WeeklyTable rows={paginatedMergedRows} emptyMessage="Aucun resultat fusionne pour cette selection." />
                 <PaginationControls
                   currentPage={mergedPage}
@@ -440,6 +469,37 @@ export function AdminVivoDashboard({ dashboard, initialDate, syncStatuses, leadS
                   onPageChange={setMonthlyPage}
                 />
               </TableSection>
+            ) : null}
+
+            {activeTable === "uber" ? (
+              <div className="space-y-4">
+                <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">Statut session Uber: {formatUberSessionStatus(uberSessionStatus.status)}</div>
+                      <div className="mt-1 text-sm text-slate-600">{uberSessionStatusMessage(uberSessionStatus)}</div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <UberIdentifyButton className="inline-flex rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-emerald-200 hover:text-emerald-700" />
+                      <UberBackfillButton className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800" />
+                      <ManualSyncButton className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500" />
+                    </div>
+                  </div>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <KpiCard label="Revenus Uber" value={formatCurrency(uberSummary.totalRevenue)} helper={`${uberSummary.totalRows} lignes importees`} />
+                  <KpiCard label="Chauffeurs Uber" value={String(uberSummary.driversCount)} helper="Chauffeurs distincts en DB" />
+                </div>
+                <TableSection title="Revenus Uber stockes" subtitle="Lecture directe depuis la base de donnees" totalItems={uberEarnings.length}>
+                  <UberEarningsTable rows={paginatedUberEarnings} />
+                  <PaginationControls
+                    currentPage={uberPage}
+                    pageSize={PAGE_SIZE}
+                    totalItems={uberEarnings.length}
+                    onPageChange={setUberPage}
+                  />
+                </TableSection>
+              </div>
             ) : null}
           </Panel>
 
@@ -547,23 +607,8 @@ export function AdminVivoDashboard({ dashboard, initialDate, syncStatuses, leadS
             <div className="flex flex-wrap gap-2">
               <MetricBadgeLight label="Periode active" value={getCurrentFilterSummary(normalizedDateRange.start, normalizedDateRange.end)} />
               <MetricBadgeLight label="Chauffeurs visibles" value={String(visibleDriversCount)} />
-              <MetricBadgeLight label="Societes visibles" value={String(visibleCompanies.length)} />
               <MetricBadgeLight label="Total chauffeurs" value={String(totalDriverCount)} />
             </div>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {companySummaries.map(({ company, count }) => (
-              <span
-                key={company}
-                className={`rounded-full border px-3 py-1 text-xs font-semibold ${
-                  count > 0
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                    : "border-slate-200 bg-slate-50 text-slate-500"
-                }`}
-              >
-                {company}: {count} ligne{count > 1 ? "s" : ""}
-              </span>
-            ))}
           </div>
           <div className="mt-5 border-t border-slate-100 pt-4">
             <div className="text-sm font-semibold text-slate-900">Etat des synchronisations</div>
@@ -586,11 +631,10 @@ function WeeklyTable({ rows, emptyMessage }: { rows: VivoWeeklyRow[]; emptyMessa
   return (
     <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
       <div className="overflow-x-auto">
-        <table className="min-w-[1320px] text-sm">
+        <table className="min-w-[1220px] text-sm">
           <thead className="bg-slate-50">
             <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
               <HeaderCell>Chauffeur</HeaderCell>
-              <HeaderCell>Societe</HeaderCell>
               <HeaderCell>Semaine</HeaderCell>
               <HeaderCell>Uber</HeaderCell>
               <HeaderCell>Bolt</HeaderCell>
@@ -616,9 +660,6 @@ function WeeklyTable({ rows, emptyMessage }: { rows: VivoWeeklyRow[]; emptyMessa
                     <span className="text-xs text-slate-500">{row.status}</span>
                     <SourceBadges sources={getWeeklyRowSources(row)} />
                   </div>
-                </BodyCell>
-                <BodyCell className="whitespace-normal">
-                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{row.company}</span>
                 </BodyCell>
                 <BodyCell>
                   <div className="font-semibold text-slate-800">{row.week}</div>
@@ -661,7 +702,7 @@ function WeeklyTable({ rows, emptyMessage }: { rows: VivoWeeklyRow[]; emptyMessa
             ))}
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={16} className="px-4 py-12 text-center text-sm text-slate-500">
+                <td colSpan={15} className="px-4 py-12 text-center text-sm text-slate-500">
                   {emptyMessage}
                 </td>
               </tr>
@@ -697,7 +738,6 @@ function MonthlyTable({ rows }: { rows: VivoMonthlyRow[] }) {
                 <BodyCell>
                   <div className="font-semibold text-slate-900">{row.name}</div>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-slate-500">{row.company}</span>
                     <SourceBadges sources={getMonthlyRowSources(row)} />
                   </div>
                 </BodyCell>
@@ -723,6 +763,53 @@ function MonthlyTable({ rows }: { rows: VivoMonthlyRow[] }) {
               <tr>
                 <td colSpan={9} className="px-4 py-12 text-center text-sm text-slate-500">
                   Aucun releve mensuel disponible pour ce filtre.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function UberEarningsTable({ rows }: { rows: UberEarningDto[] }) {
+  return (
+    <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
+      <div className="overflow-x-auto">
+        <table className="min-w-[980px] text-sm">
+          <thead className="bg-slate-50">
+            <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
+              <HeaderCell>Chauffeur</HeaderCell>
+              <HeaderCell>Periode</HeaderCell>
+              <HeaderCell>Revenus</HeaderCell>
+              <HeaderCell>Remboursements</HeaderCell>
+              <HeaderCell>Ajustements</HeaderCell>
+              <HeaderCell>Payout</HeaderCell>
+              <HeaderCell>Maj DB</HeaderCell>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id} className="border-b border-slate-100 align-top odd:bg-white even:bg-slate-50/50">
+                <BodyCell>
+                  <div className="font-semibold text-slate-900">{row.driverName}</div>
+                </BodyCell>
+                <BodyCell>
+                  <div className="font-medium text-slate-800">{formatShortDateTime(row.periodStart)}</div>
+                  <div className="text-xs text-slate-500">{formatShortDateTime(row.periodEnd)}</div>
+                </BodyCell>
+                <BodyCell className="font-semibold text-sky-700">{formatCurrency(row.revenue)}</BodyCell>
+                <BodyCell>{formatCurrency(row.reimbursements)}</BodyCell>
+                <BodyCell>{formatCurrency(row.adjustments)}</BodyCell>
+                <BodyCell>{formatCurrency(row.payout)}</BodyCell>
+                <BodyCell>{formatShortDateTime(row.updatedAt)}</BodyCell>
+              </tr>
+            ))}
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-4 py-12 text-center text-sm text-slate-500">
+                  Aucune donnee Uber importee. Connectez Uber puis cliquez sur Synchroniser Uber.
                 </td>
               </tr>
             ) : null}
@@ -901,20 +988,21 @@ function ManualSyncButton({ className }: { className: string }) {
 
     startTransition(async () => {
       try {
-        const response = await fetch("/api/dashboard/weekly-revenues", {
+        const response = await fetch("/api/integrations/uber/sync", {
           method: "POST",
           cache: "no-store",
         });
+        const payload = await response.json().catch(() => null);
 
         if (!response.ok) {
-          setMessage("Synchro impossible pour le moment.");
+          setMessage(payload?.error ?? "Synchro Uber impossible pour le moment.");
           return;
         }
 
-        setMessage("Synchro live terminee.");
+        setMessage(`Uber 24h synchronise: ${payload.imported ?? 0} importees, ${payload.updated ?? 0} mises a jour.`);
         router.refresh();
       } catch {
-        setMessage("Erreur reseau pendant la synchro.");
+        setMessage("Erreur reseau pendant la synchro Uber.");
       }
     });
   }
@@ -922,10 +1010,126 @@ function ManualSyncButton({ className }: { className: string }) {
   return (
     <div className="flex flex-col gap-1.5">
       <button type="button" onClick={handleClick} disabled={isPending} className={`${className} disabled:cursor-not-allowed disabled:opacity-60`}>
-        {isPending ? "Synchronisation..." : "Synchroniser maintenant"}
+        {isPending ? "Synchronisation Uber..." : "Synchroniser Uber 24h"}
       </button>
       {message ? <span className="text-xs text-slate-500">{message}</span> : null}
     </div>
+  );
+}
+
+function UberBackfillButton({ className }: { className: string }) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [message, setMessage] = useState<string>("");
+
+  async function handleClick() {
+    setMessage("Import historique Uber depuis le 01/01/2026...");
+
+    startTransition(async () => {
+      try {
+        const response = await fetch("/api/integrations/uber/sync", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            startDate: "2026-01-01T00:00:00.000Z",
+            endDate: new Date().toISOString(),
+          }),
+          cache: "no-store",
+        });
+        const payload = await response.json().catch(() => null);
+
+        if (!response.ok) {
+          setMessage(payload?.error ?? "Import historique Uber impossible.");
+          return;
+        }
+
+        setMessage(
+          `Historique Uber OK: ${payload.imported ?? 0} importees, ${payload.updated ?? 0} mises a jour sur ${payload.daysSynced ?? 0} jours.`,
+        );
+        router.refresh();
+      } catch {
+        setMessage("Erreur reseau pendant l'import historique Uber.");
+      }
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <button type="button" onClick={handleClick} disabled={isPending} className={`${className} disabled:cursor-not-allowed disabled:opacity-60`}>
+        {isPending ? "Import historique..." : "Importer historique"}
+      </button>
+      {message ? <span className="text-xs text-slate-500">{message}</span> : null}
+    </div>
+  );
+}
+
+function UberIdentifyButton({ className }: { className: string }) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [message, setMessage] = useState<string>("");
+
+  async function handleClick() {
+    setMessage("Identification Uber en cours...");
+
+    startTransition(async () => {
+      try {
+        const loginResponse = await fetch("/api/integrations/uber/login", {
+          method: "POST",
+          cache: "no-store",
+        });
+        const loginPayload = await loginResponse.json().catch(() => null);
+
+        if (!loginResponse.ok) {
+          setMessage(loginPayload?.error ?? "Identification Uber incomplete.");
+          return;
+        }
+
+        const syncResponse = await fetch("/api/integrations/uber/sync", {
+          method: "POST",
+          cache: "no-store",
+        });
+        const syncPayload = await syncResponse.json().catch(() => null);
+
+        if (!syncResponse.ok) {
+          setMessage(syncPayload?.error ?? "Identification OK, synchronisation Uber refusee.");
+          router.refresh();
+          return;
+        }
+
+        setMessage(`Identification OK. ${syncPayload.imported ?? 0} importees, ${syncPayload.updated ?? 0} mises a jour.`);
+        router.refresh();
+      } catch {
+        setMessage("Identification Uber impossible depuis ce serveur.");
+      }
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <button type="button" onClick={handleClick} disabled={isPending} className={`${className} disabled:cursor-not-allowed disabled:opacity-60`}>
+        {isPending ? "Identification Uber..." : "Identifier Uber"}
+      </button>
+      {message ? (
+        <span className="text-xs text-slate-500">
+          {message}{" "}
+          {message.includes("Vercel") ? (
+            <Link href="/admin/uber-session" className="font-semibold text-emerald-700 underline">
+              Session manuelle
+            </Link>
+          ) : null}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function UberSessionLink({ className }: { className: string }) {
+  return (
+    <Link href="/admin/uber-session" className={className}>
+      Session Uber
+    </Link>
   );
 }
 
@@ -1547,6 +1751,10 @@ function getActiveTableTitle(activeTable: ActiveTable): string {
     return "Releve mensuel";
   }
 
+  if (activeTable === "uber") {
+    return "Revenus Uber";
+  }
+
   return "Tableau detaille";
 }
 
@@ -1567,7 +1775,49 @@ function getActiveTableSubtitle(activeTable: ActiveTable): string {
     return "Vue mensuelle paginee dans la meme zone de travail";
   }
 
-  return "Vue detaillee par societe dans la meme zone de travail";
+  if (activeTable === "uber") {
+    return "Donnees Uber stockees en base apres synchronisation incrementale";
+  }
+
+  return "Vue detaillee des revenus dans la meme zone de travail";
+}
+
+function formatUberSessionStatus(status: UberSessionStatus["status"]): string {
+  if (status === "active") {
+    return "Active";
+  }
+
+  if (status === "expired") {
+    return "Expiree";
+  }
+
+  return "Manquante";
+}
+
+function uberSessionStatusMessage(status: UberSessionStatus): string {
+  if (status.status === "active") {
+    return status.orgUuidMasked ? `Org ${status.orgUuidMasked}` : "Session serveur disponible";
+  }
+
+  if (status.status === "expired") {
+    return "Session Uber expiree. Reconnectez-vous puis relancez la synchronisation.";
+  }
+
+  return "Session Uber manquante. Ajoutez le cookie Uber ou identifiez-vous.";
+}
+
+function formatShortDateTime(value: string | null): string {
+  if (!value) {
+    return "Aucune";
+  }
+
+  return new Date(value).toLocaleString("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function splitLeadPlatforms(value: string): string[] {

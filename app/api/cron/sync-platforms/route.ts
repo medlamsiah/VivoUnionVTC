@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { syncUberEarningsLast24h } from "@/lib/integrations/uber-earnings";
 import { scrapeWeeklyRevenuesResult } from "@/lib/integrations/weekly-revenues";
 
 export const dynamic = "force-dynamic";
@@ -13,11 +14,26 @@ export async function GET(request: NextRequest) {
 
   try {
     const result = await scrapeWeeklyRevenuesResult();
+    let uberResult: Awaited<ReturnType<typeof syncUberEarningsLast24h>> | null = null;
+    let uberError: string | null = null;
+
+    try {
+      uberResult = await syncUberEarningsLast24h();
+    } catch (error) {
+      uberError = error instanceof Error ? error.message : "Synchro Uber echouee.";
+      console.warn("Scheduled Uber sync failed.", error);
+    }
 
     return NextResponse.json({
       ok: true,
       driversCount: result.drivers.length,
       syncStatuses: result.syncStatuses,
+      uber: uberResult
+        ? uberResult
+        : {
+            ok: false,
+            error: uberError,
+          },
       syncedAt: new Date().toLocaleString("fr-FR"),
     });
   } catch (error) {

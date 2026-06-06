@@ -117,3 +117,38 @@ model UberDriverRevenueSnapshot {
   @@index([snapshotDate])
   @@index([periodStart, periodEnd])
 }
+
+model UberEarning {
+  id             String   @id @default(cuid())
+  externalId     String   @unique
+  driverName     String
+  revenue        Float    @default(0)
+  reimbursements Float    @default(0)
+  adjustments    Float    @default(0)
+  payout         Float    @default(0)
+  periodStart    DateTime
+  periodEnd      DateTime
+  raw            Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([driverName])
+  @@index([periodStart, periodEnd])
+  @@index([updatedAt])
+}
+
+model UberSession {
+  id                    String   @id @default(cuid())
+  provider              String   @unique @default("uber")
+  cookieCiphertext       String?  @db.Text
+  csrfTokenCiphertext    String?  @db.Text
+  orgUuid               String?
+  status                String   @default("missing")
+  lastValidatedAt       DateTime?
+  lastError             String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([status])
+  @@index([updatedAt])
+}

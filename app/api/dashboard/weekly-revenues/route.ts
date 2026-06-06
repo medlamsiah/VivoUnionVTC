@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 
 import {
   buildDriverWeeklyDashboardRows,
   listDriverWeeklyLocationSettings,
   listLocationTypePricings,
 } from "@/lib/driver-weekly-settings";
+import { listUberEarnings, listUberEarningsAsWeeklyDrivers } from "@/lib/integrations/uber-earnings";
+import { scrapeWeeklyRevenuesResult } from "@/lib/integrations/weekly-revenues";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,49 +14,39 @@ export const maxDuration = 120;
 
 export async function GET() {
   try {
-    const [locationSettings, locationTypePricings, uberSnapshots] = await Promise.all([
+    const [locationSettings, locationTypePricings, weeklyResult, uberDrivers, uberSummary] = await Promise.all([
       listDriverWeeklyLocationSettings(),
       listLocationTypePricings(),
-      prisma.uberDriverRevenueSnapshot.findMany({
-        orderBy: {
-          snapshotDate: "desc",
-        },
-      }),
+      scrapeWeeklyRevenuesResult(),
+      listUberEarningsAsWeeklyDrivers(),
+      listUberEarnings(),
     ]);
-
-    const uberMap = new Map<string, number>();
-
-    for (const snap of uberSnapshots) {
-      const key = snap.driverNameKey?.trim().toLowerCase();
-      if (!key) continue;
-
-      uberMap.set(key, (uberMap.get(key) || 0) + snap.totalRevenue);
-    }
-
-    const baseDrivers = locationSettings.map((driver) => ({
-      id: driver.driverId,
-      name: driver.driverName,
-      company: driver.companyName || "",
-      uber: uberMap.get(driver.driverName.trim().toLowerCase()) || 0,
-      bolt: 0,
-      heetch: 0,
-      location: 0,
-      acompte: 0,
-      week: "S21",
-      weekValue: "2026-W21",
-      status: "Actif",
-      vehicleType: null,
-    }));
+    const combinedDrivers = [...weeklyResult.drivers, ...uberDrivers];
 
     const drivers = buildDriverWeeklyDashboardRows(
-      baseDrivers,
+      combinedDrivers,
       locationSettings,
       locationTypePricings
+    );
+    const syncStatuses = weeklyResult.syncStatuses.map((status) =>
+      status.platform === "uber"
+        ? {
+            ...status,
+            state: uberSummary.lastSyncAt ? ("live" as const) : status.state,
+            updatedAt: uberSummary.lastSyncAt
+              ? new Date(uberSummary.lastSyncAt).toLocaleString("fr-FR")
+              : status.updatedAt,
+            message: uberSummary.lastSyncAt
+              ? "Donnees Uber lues depuis la base."
+              : "Aucune donnee Uber synchronisee pour le moment.",
+          }
+        : status,
     );
 
     return NextResponse.json({
       drivers,
-      syncStatuses: [],
+      syncStatuses,
+      uberSummary,
     });
   } catch (error) {
     console.error("Failed to load dashboard revenues:", error);

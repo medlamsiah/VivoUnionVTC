@@ -5,6 +5,8 @@ import {
   listLocationTypePricings,
 } from "@/lib/driver-weekly-settings";
 import { readWeeklyRevenuesSnapshot, scrapeWeeklyRevenuesResult } from "@/lib/integrations/weekly-revenues";
+import { listUberEarnings, listUberEarningsAsWeeklyDrivers } from "@/lib/integrations/uber-earnings";
+import { getUberSessionStatus } from "@/lib/integrations/uber-session";
 import { prisma } from "@/lib/prisma";
 import { buildVivoDashboardData } from "@/lib/vivo-dashboard";
 
@@ -22,7 +24,7 @@ export default async function AdminPage() {
     }
   }
 
-  const [total, last7, leads] = await Promise.all([
+  const [total, last7, leads, uberEarningsResponse, uberDbDrivers, uberSessionStatus] = await Promise.all([
     prisma.lead.count(),
     prisma.lead.count({
       where: { createdAt: { gte: new Date(Date.now() - 7 * 24 * 3600 * 1000) } },
@@ -31,13 +33,31 @@ export default async function AdminPage() {
       orderBy: { createdAt: "desc" },
       take: 500,
     }),
+    listUberEarnings(),
+    listUberEarningsAsWeeklyDrivers(),
+    getUberSessionStatus(),
   ]);
   const [locationSettings, locationTypePricings] = await Promise.all([
     listDriverWeeklyLocationSettings(),
     listLocationTypePricings(),
   ]);
+  const combinedDrivers = [...revenuesResult.drivers, ...uberDbDrivers];
+  const syncStatuses = revenuesResult.syncStatuses.map((status) =>
+    status.platform === "uber"
+      ? {
+          ...status,
+          state: uberEarningsResponse.lastSyncAt ? ("live" as const) : status.state,
+          updatedAt: uberEarningsResponse.lastSyncAt
+            ? new Date(uberEarningsResponse.lastSyncAt).toLocaleString("fr-FR")
+            : status.updatedAt,
+          message: uberEarningsResponse.lastSyncAt
+            ? "Donnees Uber chargees depuis la base. La synchronisation importe uniquement les dernieres 24h."
+            : status.message,
+        }
+      : status,
+  );
   const driversWithLocations = buildDriverWeeklyDashboardRows(
-    revenuesResult.drivers,
+    combinedDrivers,
     locationSettings,
     locationTypePricings,
   );
@@ -48,7 +68,15 @@ export default async function AdminPage() {
     <AdminVivoDashboard
       dashboard={dashboard}
       initialDate={initialDate}
-      syncStatuses={revenuesResult.syncStatuses}
+      syncStatuses={syncStatuses}
+      uberEarnings={uberEarningsResponse.earnings}
+      uberSummary={{
+        totalRevenue: uberEarningsResponse.totalRevenue,
+        driversCount: uberEarningsResponse.driversCount,
+        totalRows: uberEarningsResponse.totalRows,
+        lastSyncAt: uberEarningsResponse.lastSyncAt,
+      }}
+      uberSessionStatus={uberSessionStatus}
       leads={leads.map((lead) => ({
         id: lead.id,
         createdAt: lead.createdAt.toISOString(),
