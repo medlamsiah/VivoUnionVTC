@@ -346,6 +346,7 @@ export function AdminVivoDashboard({
                 >
                   Export Excel
                 </a>
+                <BoltSyncButton className="inline-flex items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-500" />
                 <ManualSyncButton className="inline-flex items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-500" />
                 <UberBackfillButton className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800" />
                 <UberIdentifyButton className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-emerald-200 hover:text-emerald-700" />
@@ -382,6 +383,7 @@ export function AdminVivoDashboard({
                 >
                   Export Excel
                 </a>
+                <BoltSyncButton className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500" />
                 <ManualSyncButton className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500" />
                 <UberBackfillButton className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800" />
                 <UberIdentifyButton className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-emerald-200 hover:text-emerald-700" />
@@ -975,6 +977,45 @@ function SidebarNavButton({
     >
       {children}
     </button>
+  );
+}
+
+function BoltSyncButton({ className }: { className: string }) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [message, setMessage] = useState<string>("");
+
+  async function handleClick() {
+    setMessage("Synchronisation Bolt 24h...");
+
+    startTransition(async () => {
+      try {
+        const response = await fetch("/api/integrations/bolt/sync", {
+          method: "POST",
+          cache: "no-store",
+        });
+        const payload = await response.json().catch(() => null);
+
+        if (!response.ok) {
+          setMessage(payload?.error ?? "Synchro Bolt 24h impossible.");
+          return;
+        }
+
+        setMessage(`Bolt OK: ${payload.updatedRows ?? 0} lignes mises a jour, cache conserve.`);
+        router.refresh();
+      } catch {
+        setMessage("Erreur reseau pendant la synchro Bolt.");
+      }
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <button type="button" onClick={handleClick} disabled={isPending} className={`${className} disabled:cursor-not-allowed disabled:opacity-60`}>
+        {isPending ? "Synchro Bolt..." : "Synchroniser Bolt 24h"}
+      </button>
+      {message ? <span className="text-xs text-slate-500">{message}</span> : null}
+    </div>
   );
 }
 

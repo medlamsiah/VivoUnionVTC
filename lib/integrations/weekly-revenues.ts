@@ -1,4 +1,6 @@
 import {
+  loadCachedBoltStatus,
+  loadCachedBoltWeeklyRevenues,
   scrapeBoltWeeklyRevenuesResult,
   type WeeklyDriverInput,
 } from "@/lib/integrations/bolt-scraper";
@@ -79,6 +81,35 @@ export async function scrapeWeeklyRevenuesResult(): Promise<WeeklyRevenuesResult
     };
   } catch (error) {
     console.warn("Bolt API sync failed.", error);
+    const cachedRows = loadCachedBoltWeeklyRevenues();
+    const cachedStatus = loadCachedBoltStatus();
+
+    if (cachedRows.length > 0) {
+      return {
+        drivers: cachedRows,
+        syncStatuses: [
+          {
+            platform: "bolt",
+            state: "cache",
+            updatedAt: cachedStatus.updatedAt,
+            message: "Synchro Bolt indisponible. Donnees chargees depuis le cache.",
+            diagnostics: [error instanceof Error ? error.message : "Synchro Bolt echouee."],
+          },
+          {
+            platform: "uber",
+            state: "fallback",
+            updatedAt: null,
+            message: DISABLED_PLATFORM_MESSAGE,
+          },
+          {
+            platform: "heetch",
+            state: "fallback",
+            updatedAt: null,
+            message: DISABLED_PLATFORM_MESSAGE,
+          },
+        ],
+      };
+    }
 
     return {
       drivers: [],
@@ -116,6 +147,35 @@ export async function scrapeWeeklyRevenues(): Promise<WeeklyDriverInput[]> {
 }
 
 export function readWeeklyRevenuesSnapshot(): WeeklyRevenuesResult {
+  const cachedRows = loadCachedBoltWeeklyRevenues();
+  const cachedStatus = loadCachedBoltStatus();
+
+  if (cachedRows.length > 0) {
+    return {
+      drivers: cachedRows,
+      syncStatuses: [
+        {
+          platform: "bolt",
+          state: "cache",
+          updatedAt: cachedStatus.updatedAt,
+          message: cachedStatus.message || "Donnees Bolt chargees depuis le cache.",
+        },
+        {
+          platform: "uber",
+          state: "fallback",
+          updatedAt: null,
+          message: DISABLED_PLATFORM_MESSAGE,
+        },
+        {
+          platform: "heetch",
+          state: "fallback",
+          updatedAt: null,
+          message: DISABLED_PLATFORM_MESSAGE,
+        },
+      ],
+    };
+  }
+
   return {
     drivers: [],
     syncStatuses: getPlatformSyncStatuses(),

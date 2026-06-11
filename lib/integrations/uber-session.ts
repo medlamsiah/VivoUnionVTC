@@ -40,8 +40,8 @@ export class UberSessionMissingError extends Error {
 }
 
 export class UberSessionExpiredError extends Error {
-  constructor() {
-    super("Session Uber expiree. Reconnectez-vous puis relancez la synchronisation.");
+  constructor(message = "Session Uber expiree. Reconnectez-vous puis relancez la synchronisation.") {
+    super(message);
     this.name = "UberSessionExpiredError";
   }
 }
@@ -87,27 +87,43 @@ export async function getUberServerSession(): Promise<UberServerSession> {
       provider: PROVIDER,
     },
   });
+  const envSession = getUberEnvironmentSession();
 
-  if (dbSession?.cookieCiphertext && dbSession.orgUuid) {
-    return {
-      cookie: decryptSecret(dbSession.cookieCiphertext),
-      orgUuid: dbSession.orgUuid,
-      csrfToken: dbSession.csrfTokenCiphertext ? decryptSecret(dbSession.csrfTokenCiphertext) : DEFAULT_CSRF_TOKEN,
-      source: "database",
-    };
+  if (dbSession?.status === "expired") {
+    if (envSession) {
+      return envSession;
+    }
+
+    throw new UberSessionExpiredError();
   }
 
-  const cookie = process.env.UBER_COOKIE?.trim();
-  const orgUuid = (process.env.UBER_ORG_UUID ?? process.env.UBER_SUPPLIER_UUID)?.trim();
-  const csrfToken = process.env.UBER_CSRF_TOKEN?.trim() || process.env.UBER_X_CSRF_TOKEN?.trim() || DEFAULT_CSRF_TOKEN;
+  if (dbSession?.cookieCiphertext && dbSession.orgUuid) {
+    try {
+      return {
+        cookie: decryptSecret(dbSession.cookieCiphertext),
+        orgUuid: dbSession.orgUuid,
+        csrfToken: dbSession.csrfTokenCiphertext ? decryptSecret(dbSession.csrfTokenCiphertext) : DEFAULT_CSRF_TOKEN,
+        source: "database",
+      };
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? `Session Uber en base illisible: ${error.message}`
+          : "Session Uber en base illisible.";
+      await markUberSessionExpired(message);
 
-  if (cookie && orgUuid) {
-    return {
-      cookie,
-      orgUuid,
-      csrfToken,
-      source: "environment",
-    };
+      if (envSession) {
+        return envSession;
+      }
+
+      throw new UberSessionExpiredError(
+        "Session Uber en base illisible. Enregistrez a nouveau le cookie sur /admin/uber-session ou configurez UBER_SESSION_SECRET.",
+      );
+    }
+  }
+
+  if (envSession) {
+    return envSession;
   }
 
   throw new UberSessionMissingError();
@@ -119,6 +135,23 @@ export async function getUberSessionStatus(): Promise<UberSessionStatus> {
       provider: PROVIDER,
     },
   });
+  const envSession = getUberEnvironmentSession();
+
+  if (dbSession?.status === "expired" && envSession) {
+    return {
+      ok: true,
+      provider: PROVIDER,
+      status: "active",
+      hasCookie: true,
+      hasOrgUuid: true,
+      orgUuidMasked: maskUuid(envSession.orgUuid),
+      csrfTokenMasked: envSession.csrfToken ? "****" : null,
+      updatedAt: dbSession.updatedAt.toISOString(),
+      lastValidatedAt: dbSession.lastValidatedAt?.toISOString() ?? null,
+      lastError: "Session en base expiree ignoree. Utilisation de la session Uber definie dans les variables serveur.",
+      source: "environment",
+    };
+  }
 
   if (dbSession && (dbSession.cookieCiphertext || dbSession.status === "expired")) {
     return {
@@ -136,8 +169,8 @@ export async function getUberSessionStatus(): Promise<UberSessionStatus> {
     };
   }
 
-  const envCookie = process.env.UBER_COOKIE?.trim();
-  const envOrgUuid = (process.env.UBER_ORG_UUID ?? process.env.UBER_SUPPLIER_UUID)?.trim();
+  const envCookie = envSession?.cookie;
+  const envOrgUuid = envSession?.orgUuid;
   const envCsrf = process.env.UBER_CSRF_TOKEN?.trim() || process.env.UBER_X_CSRF_TOKEN?.trim();
 
   if (envCookie || envOrgUuid) {
@@ -252,6 +285,23 @@ function getEncryptionKey(): Buffer {
     "vivo-uber-session-development-secret";
 
   return crypto.createHash("sha256").update(secret).digest();
+}
+
+function getUberEnvironmentSession(): UberServerSession | null {
+  const cookie = process.env.UBER_COOKIE?.trim();
+  const orgUuid = (process.env.UBER_ORG_UUID ?? process.env.UBER_SUPPLIER_UUID)?.trim();
+  const csrfToken = process.env.UBER_CSRF_TOKEN?.trim() || process.env.UBER_X_CSRF_TOKEN?.trim() || DEFAULT_CSRF_TOKEN;
+
+  if (!cookie || !orgUuid) {
+    return null;
+  }
+
+  return {
+    cookie,
+    orgUuid,
+    csrfToken,
+    source: "environment",
+  };
 }
 
 function maskUuid(value: string | null): string | null {

@@ -37,6 +37,7 @@ export async function POST(request: Request) {
         ok: false,
         provider: "uber",
         error: "Synchronisation Uber impossible pour le moment.",
+        reason: getSafeErrorReason(error),
       },
       { status: 500 },
     );
@@ -50,4 +51,28 @@ function parseOptionalDate(value: unknown): Date | null {
 
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function getSafeErrorReason(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "unknown_error";
+  }
+
+  if (error.message.includes("Table") || error.message.includes("does not exist")) {
+    return "database_schema_not_ready";
+  }
+
+  if (error.message.includes("GraphQL")) {
+    return "uber_graphql_error";
+  }
+
+  if (error.message.includes("fetch failed")) {
+    return "uber_network_error";
+  }
+
+  if (error.message.includes("Invalid encrypted Uber session value")) {
+    return "uber_session_encryption_error";
+  }
+
+  return error.name || "sync_error";
 }

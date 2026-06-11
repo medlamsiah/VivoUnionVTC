@@ -6,7 +6,7 @@ import {
   listLocationTypePricings,
 } from "@/lib/driver-weekly-settings";
 import { listUberEarnings, listUberEarningsAsWeeklyDrivers } from "@/lib/integrations/uber-earnings";
-import { scrapeWeeklyRevenuesResult } from "@/lib/integrations/weekly-revenues";
+import { readWeeklyRevenuesSnapshot, scrapeWeeklyRevenuesResult } from "@/lib/integrations/weekly-revenues";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,13 +14,16 @@ export const maxDuration = 120;
 
 export async function GET() {
   try {
-    const [locationSettings, locationTypePricings, weeklyResult, uberDrivers, uberSummary] = await Promise.all([
+    const [locationSettings, locationTypePricings, uberDrivers, uberSummary] = await Promise.all([
       listDriverWeeklyLocationSettings(),
       listLocationTypePricings(),
-      scrapeWeeklyRevenuesResult(),
       listUberEarningsAsWeeklyDrivers(),
       listUberEarnings(),
     ]);
+    let weeklyResult = readWeeklyRevenuesSnapshot();
+    if (weeklyResult.drivers.length === 0) {
+      weeklyResult = await scrapeWeeklyRevenuesResult();
+    }
     const combinedDrivers = [...weeklyResult.drivers, ...uberDrivers];
 
     const drivers = buildDriverWeeklyDashboardRows(

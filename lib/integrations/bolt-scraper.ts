@@ -1,4 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
+
 const ACTIVITY_STATUS = "Actif" as const;
+const BOLT_CACHE_DIR = path.join(process.cwd(), ".cache");
+const BOLT_CACHE_FILE = path.join(BOLT_CACHE_DIR, "bolt-weekly-revenues.json");
+const BOLT_STATUS_FILE = path.join(BOLT_CACHE_DIR, "bolt-sync-status.json");
 
 type WeeklyDriverInput = {
   id: number;
@@ -24,6 +30,18 @@ type BoltAccessTokenResponse = {
 type BoltSyncResult = {
   rows: WeeklyDriverInput[];
   updatedAt: string;
+  diagnostics: string[];
+};
+
+export type BoltIncrementalSyncResult = {
+  ok: true;
+  provider: "bolt";
+  updatedRows: number;
+  totalInCache: number;
+  updatedWeeks: string[];
+  rangeStart: string;
+  rangeEnd: string;
+  lastSyncAt: string;
   diagnostics: string[];
 };
 
@@ -155,18 +173,17 @@ async function fetchBoltApi(path: string, body?: unknown) {
   return parseJsonSafe(response);
 }
 
-function getDateChunks() {
+function getDateChunks(startDate = new Date("2026-01-01T00:00:00Z"), endDate = new Date()) {
   const chunks: Array<{ start_ts: number; end_ts: number }> = [];
-  const now = new Date();
-  let current = new Date("2026-01-01T00:00:00Z");
+  let current = new Date(startDate);
 
-  while (current < now) {
+  while (current < endDate) {
     const end = new Date(current);
     end.setDate(end.getDate() + 30);
 
     chunks.push({
       start_ts: Math.floor(current.getTime() / 1000),
-      end_ts: Math.floor(Math.min(end.getTime(), now.getTime()) / 1000),
+      end_ts: Math.floor(Math.min(end.getTime(), endDate.getTime()) / 1000),
     });
 
     current = new Date(end);
@@ -193,7 +210,105 @@ function getOrderAmount(order: any) {
 
 export async function scrapeBoltWeeklyRevenuesResult(): Promise<BoltSyncResult> {
   const diagnostics: string[] = [];
+  const rows = await fetchBoltRowsForChunks(getDateChunks(), diagnostics);
 
+  return {
+    rows: saveAndReturnBoltRows(rows),
+    updatedAt: new Date().toISOString(),
+    diagnostics,
+  };
+}
+
+export async function syncBoltLast24hKeepingCache(): Promise<BoltIncrementalSyncResult> {
+  const endDate = new Date();
+  const startDate = new Date(endDate.getTime() - 24 * 60 * 60 * 1000);
+  const diagnostics: string[] = [];
+  const affectedRanges = getAffectedWeekRanges(startDate, endDate);
+  const affectedWeekValues = new Set(affectedRanges.map((range) => range.weekValue));
+  const freshRows = await fetchBoltRowsForChunks(
+    affectedRanges.flatMap((range) => getDateChunks(range.start, range.end)),
+    diagnostics,
+  );
+  const cachedRows = loadCachedBoltWeeklyRevenues();
+  const preservedRows = cachedRows.filter((row) => !affectedWeekValues.has(row.weekValue));
+  const mergedRows = reindexRows([...preservedRows, ...freshRows]);
+  const lastSyncAt = new Date().toISOString();
+
+  saveBoltRows(mergedRows, {
+    state: diagnostics.length > 0 ? "cache" : "live",
+    message: diagnostics.length > 0
+      ? "Synchro Bolt 24h partielle avec cache conserve."
+      : "Synchro Bolt 24h reussie, cache conserve.",
+    updatedAt: new Date().toLocaleString("fr-FR"),
+  });
+
+  return {
+    ok: true,
+    provider: "bolt",
+    updatedRows: freshRows.length,
+    totalInCache: mergedRows.length,
+    updatedWeeks: [...affectedWeekValues],
+    rangeStart: startDate.toISOString(),
+    rangeEnd: endDate.toISOString(),
+    lastSyncAt,
+    diagnostics,
+  };
+}
+
+export async function scrapeBoltWeeklyRevenues() {
+  const result = await scrapeBoltWeeklyRevenuesResult();
+  return result.rows;
+}
+
+export function loadCachedBoltWeeklyRevenues(): WeeklyDriverInput[] {
+  try {
+    if (!fs.existsSync(BOLT_CACHE_FILE)) {
+      return [];
+    }
+
+    const parsed = JSON.parse(fs.readFileSync(BOLT_CACHE_FILE, "utf8"));
+    return Array.isArray(parsed) ? (parsed as WeeklyDriverInput[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function loadCachedBoltStatus(): { updatedAt: string | null; message: string } {
+  try {
+    if (!fs.existsSync(BOLT_STATUS_FILE)) {
+      return {
+        updatedAt: null,
+        message: "Cache Bolt indisponible.",
+      };
+    }
+
+    const parsed = JSON.parse(fs.readFileSync(BOLT_STATUS_FILE, "utf8"));
+    return {
+      updatedAt: typeof parsed?.updatedAt === "string" ? parsed.updatedAt : null,
+      message: typeof parsed?.message === "string" ? parsed.message : "Donnees Bolt chargees depuis le cache.",
+    };
+  } catch {
+    return {
+      updatedAt: null,
+      message: "Cache Bolt illisible.",
+    };
+  }
+}
+
+function saveAndReturnBoltRows(rows: WeeklyDriverInput[]): WeeklyDriverInput[] {
+  saveBoltRows(rows, {
+    state: "live",
+    updatedAt: new Date().toLocaleString("fr-FR"),
+    message: "Synchro Bolt reussie en direct.",
+  });
+
+  return rows;
+}
+
+async function fetchBoltRowsForChunks(
+  chunks: Array<{ start_ts: number; end_ts: number }>,
+  diagnostics: string[],
+): Promise<WeeklyDriverInput[]> {
   const companiesResponse = await fetch(
     `${getBoltApiBaseUrl()}/fleetIntegration/v1/getCompanies`,
     {
@@ -204,15 +319,13 @@ export async function scrapeBoltWeeklyRevenuesResult(): Promise<BoltSyncResult> 
       cache: "no-store",
     }
   );
-
   const companiesJson = await parseJsonSafe(companiesResponse);
   const companyIds: number[] = companiesJson?.data?.company_ids ?? [];
-
   const rowsMap = new Map<string, WeeklyDriverInput>();
   let syntheticId = 1;
 
   for (const companyId of companyIds) {
-    for (const chunk of getDateChunks()) {
+    for (const chunk of chunks) {
       try {
         const payload = await fetchBoltApi("/fleetIntegration/v1/getFleetOrders", {
           company_ids: [companyId],
@@ -221,23 +334,19 @@ export async function scrapeBoltWeeklyRevenuesResult(): Promise<BoltSyncResult> 
           limit: 1000,
           offset: 0,
         });
-
         const orders = payload?.data?.orders ?? [];
 
         for (const order of orders) {
           const driverName = order?.driver_name ?? "Unknown";
           const companyName = order?.category_info?.name ?? `Bolt Fleet ${companyId}`;
           const amount = getOrderAmount(order);
-
           const timestamp =
             order?.order_finished_timestamp ??
             order?.order_drop_off_timestamp ??
             order?.order_created_timestamp ??
             Math.floor(Date.now() / 1000);
-
           const date = new Date(timestamp * 1000).toISOString();
           const { week, weekValue } = isoWeekParts(date);
-
           const key = `${companyName}-${driverName}-${weekValue}`;
 
           if (!rowsMap.has(key)) {
@@ -267,14 +376,76 @@ export async function scrapeBoltWeeklyRevenuesResult(): Promise<BoltSyncResult> 
     }
   }
 
-  return {
-    rows: Array.from(rowsMap.values()),
-    updatedAt: new Date().toISOString(),
-    diagnostics,
-  };
+  return Array.from(rowsMap.values());
 }
 
-export async function scrapeBoltWeeklyRevenues() {
-  const result = await scrapeBoltWeeklyRevenuesResult();
-  return result.rows;
+function getAffectedWeekRanges(startDate: Date, endDate: Date): Array<{ start: Date; end: Date; weekValue: string }> {
+  const ranges: Array<{ start: Date; end: Date; weekValue: string }> = [];
+  const seen = new Set<string>();
+  const cursor = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate()));
+  const last = new Date(Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate()));
+
+  while (cursor <= last) {
+    const { weekValue } = isoWeekParts(cursor.toISOString());
+    if (!seen.has(weekValue)) {
+      const weekStart = getIsoWeekStart(cursor);
+      const weekEnd = getIsoWeekEnd(cursor);
+      seen.add(weekValue);
+      ranges.push({
+        start: weekStart,
+        end: weekEnd.getTime() < endDate.getTime() ? weekEnd : endDate,
+        weekValue,
+      });
+    }
+
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return ranges;
+}
+
+function getIsoWeekStart(date: Date): Date {
+  const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = start.getUTCDay() || 7;
+  start.setUTCDate(start.getUTCDate() - day + 1);
+  start.setUTCHours(0, 0, 0, 0);
+  return start;
+}
+
+function getIsoWeekEnd(date: Date): Date {
+  const end = getIsoWeekStart(date);
+  end.setUTCDate(end.getUTCDate() + 7);
+  end.setUTCMilliseconds(end.getUTCMilliseconds() - 1);
+  return end;
+}
+
+function reindexRows(rows: WeeklyDriverInput[]): WeeklyDriverInput[] {
+  return rows
+    .sort((a, b) => a.weekValue.localeCompare(b.weekValue) || a.name.localeCompare(b.name))
+    .map((row, index) => ({
+      ...row,
+      id: index + 1,
+    }));
+}
+
+function saveBoltRows(
+  rows: WeeklyDriverInput[],
+  status: { state: "live" | "cache" | "fallback"; updatedAt: string; message: string },
+): void {
+  try {
+    fs.mkdirSync(BOLT_CACHE_DIR, { recursive: true });
+    fs.writeFileSync(BOLT_CACHE_FILE, JSON.stringify(rows), "utf8");
+    fs.writeFileSync(
+      BOLT_STATUS_FILE,
+      JSON.stringify({
+        platform: "bolt",
+        state: status.state,
+        updatedAt: status.updatedAt,
+        message: status.message,
+      }),
+      "utf8",
+    );
+  } catch {
+    // Cache writes are best effort; live API data can still be returned.
+  }
 }
