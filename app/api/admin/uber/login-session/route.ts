@@ -66,6 +66,7 @@ function isAuthorizedAdminRequest(request: NextRequest): boolean {
   const forwardedHost = request.headers.get("x-forwarded-host");
   const fetchSite = request.headers.get("sec-fetch-site");
   const requestHost = forwardedHost ?? host;
+  const isSameSiteRequest = fetchSite === "same-origin" || fetchSite === "same-site";
 
   if (!requestHost) {
     return false;
@@ -74,15 +75,14 @@ function isAuthorizedAdminRequest(request: NextRequest): boolean {
   try {
     const source = origin ?? referer;
     if (!source) {
-      return false;
+      return isSameSiteRequest;
     }
 
     const sourceUrl = new URL(source);
     const isSameHost = sourceUrl.host === requestHost;
     const isAdminPage = sourceUrl.pathname === "/admin" || sourceUrl.pathname.startsWith("/admin/");
-    const isSameSiteRequest = !fetchSite || fetchSite === "same-origin" || fetchSite === "same-site";
 
-    return isSameHost && isAdminPage && isSameSiteRequest;
+    return isSameHost && isAdminPage && (!fetchSite || isSameSiteRequest);
   } catch {
     return false;
   }
