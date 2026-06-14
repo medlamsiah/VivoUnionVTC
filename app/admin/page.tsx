@@ -4,7 +4,7 @@ import {
   listDriverWeeklyLocationSettings,
   listLocationTypePricings,
 } from "@/lib/driver-weekly-settings";
-import { readWeeklyRevenuesSnapshot, scrapeWeeklyRevenuesResult } from "@/lib/integrations/weekly-revenues";
+import { readWeeklyRevenuesSnapshot } from "@/lib/integrations/weekly-revenues";
 import { listUberEarnings, listUberEarningsAsWeeklyDrivers } from "@/lib/integrations/uber-earnings";
 import { getUberSessionStatus } from "@/lib/integrations/uber-session";
 import { prisma } from "@/lib/prisma";
@@ -14,15 +14,7 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
   const initialDate = new Date().toISOString().slice(0, 10);
-  let revenuesResult = readWeeklyRevenuesSnapshot();
-
-  if (revenuesResult.drivers.length === 0) {
-    try {
-      revenuesResult = await scrapeWeeklyRevenuesResult();
-    } catch (error) {
-      console.warn("Initial Bolt sync failed while rendering /admin.", error);
-    }
-  }
+  const revenuesResult = await readWeeklyRevenuesSnapshot();
 
   const [total, last7, leads, uberEarningsResponse, uberDbDrivers, uberSessionStatus] = await Promise.all([
     prisma.lead.count(),

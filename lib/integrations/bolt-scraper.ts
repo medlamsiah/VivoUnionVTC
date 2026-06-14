@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { prisma } from "@/lib/prisma";
+
 const ACTIVITY_STATUS = "Actif" as const;
 const BOLT_CACHE_DIR = path.join(process.cwd(), ".cache");
 const BOLT_CACHE_FILE = path.join(BOLT_CACHE_DIR, "bolt-weekly-revenues.json");
@@ -31,6 +33,11 @@ type BoltSyncResult = {
   rows: WeeklyDriverInput[];
   updatedAt: string;
   diagnostics: string[];
+};
+
+export type PersistedBoltWeeklyRevenueSnapshot = {
+  rows: WeeklyDriverInput[];
+  updatedAt: string | null;
 };
 
 export type BoltIncrementalSyncResult = {
@@ -213,7 +220,7 @@ export async function scrapeBoltWeeklyRevenuesResult(): Promise<BoltSyncResult> 
   const rows = await fetchBoltRowsForChunks(getDateChunks(), diagnostics);
 
   return {
-    rows: saveAndReturnBoltRows(rows),
+    rows: await saveAndReturnBoltRows(rows),
     updatedAt: new Date().toISOString(),
     diagnostics,
   };
@@ -229,7 +236,8 @@ export async function syncBoltLast24hKeepingCache(): Promise<BoltIncrementalSync
     affectedRanges.flatMap((range) => getDateChunks(range.start, range.end)),
     diagnostics,
   );
-  const cachedRows = loadCachedBoltWeeklyRevenues();
+  const persistedSnapshot = await loadPersistedBoltWeeklyRevenuesSnapshot();
+  const cachedRows = persistedSnapshot.rows.length > 0 ? persistedSnapshot.rows : loadCachedBoltWeeklyRevenues();
   const preservedRows = cachedRows.filter((row) => !affectedWeekValues.has(row.weekValue));
   const mergedRows = reindexRows([...preservedRows, ...freshRows]);
   const lastSyncAt = new Date().toISOString();
@@ -241,6 +249,7 @@ export async function syncBoltLast24hKeepingCache(): Promise<BoltIncrementalSync
       : "Synchro Bolt 24h reussie, cache conserve.",
     updatedAt: new Date().toLocaleString("fr-FR"),
   });
+  await persistBoltWeeklyRevenueRows(mergedRows);
 
   return {
     ok: true,
@@ -295,14 +304,142 @@ export function loadCachedBoltStatus(): { updatedAt: string | null; message: str
   }
 }
 
-function saveAndReturnBoltRows(rows: WeeklyDriverInput[]): WeeklyDriverInput[] {
+export async function loadPersistedBoltWeeklyRevenuesSnapshot(): Promise<PersistedBoltWeeklyRevenueSnapshot> {
+  try {
+    const rows = await prisma.platformWeeklyRevenue.findMany({
+      where: {
+        platform: "bolt",
+        gross: {
+          gt: 0,
+        },
+      },
+      orderBy: [
+        {
+          weekValue: "asc",
+        },
+        {
+          driverName: "asc",
+        },
+      ],
+    });
+    const updatedAt = rows.reduce<string | null>((latest, row) => {
+      const value = row.updatedAt.toISOString();
+      return !latest || value > latest ? value : latest;
+    }, null);
+
+    return {
+      rows: rows.map((row, index) => ({
+        id: index + 1,
+        name: row.driverName,
+        company: row.company,
+        uber: 0,
+        bolt: round2(row.gross),
+        heetch: 0,
+        location: 0,
+        acompte: 0,
+        week: row.week,
+        weekValue: row.weekValue,
+        status: ACTIVITY_STATUS,
+      })),
+      updatedAt,
+    };
+  } catch (error) {
+    console.warn("Unable to load Bolt weekly revenues from Prisma.", error);
+    return {
+      rows: [],
+      updatedAt: null,
+    };
+  }
+}
+
+async function saveAndReturnBoltRows(rows: WeeklyDriverInput[]): Promise<WeeklyDriverInput[]> {
   saveBoltRows(rows, {
     state: "live",
     updatedAt: new Date().toLocaleString("fr-FR"),
     message: "Synchro Bolt reussie en direct.",
   });
+  await persistBoltWeeklyRevenueRows(rows);
 
   return rows;
+}
+
+async function persistBoltWeeklyRevenueRows(rows: WeeklyDriverInput[]): Promise<void> {
+  const groupedRows = groupBoltRowsForPersistence(rows);
+
+  try {
+    await prisma.$transaction([
+      prisma.platformWeeklyRevenue.deleteMany({
+        where: {
+          platform: "bolt",
+        },
+      }),
+      ...(groupedRows.length > 0
+        ? [
+            prisma.platformWeeklyRevenue.createMany({
+              data: groupedRows.map((row) => ({
+                platform: "bolt",
+                driverName: row.driverName,
+                driverNameKey: row.driverNameKey,
+                company: row.company,
+                weekValue: row.weekValue,
+                week: row.week,
+                gross: row.gross,
+                net: row.gross,
+                payout: 0,
+                adjustments: 0,
+                reimbursements: 0,
+              })),
+            }),
+          ]
+        : []),
+    ]);
+  } catch (error) {
+    console.warn("Unable to persist Bolt weekly revenues in Prisma.", error);
+  }
+}
+
+function groupBoltRowsForPersistence(rows: WeeklyDriverInput[]) {
+  const groupedRows = new Map<
+    string,
+    {
+      driverName: string;
+      driverNameKey: string;
+      companyNames: Set<string>;
+      weekValue: string;
+      week: string;
+      gross: number;
+    }
+  >();
+
+  for (const row of rows) {
+    const driverNameKey = normalizeDriverNameKey(row.name);
+    const key = `${driverNameKey}::${row.weekValue}`;
+    const existing =
+      groupedRows.get(key) ??
+      {
+        driverName: row.name,
+        driverNameKey,
+        companyNames: new Set<string>(),
+        weekValue: row.weekValue,
+        week: row.week,
+        gross: 0,
+      };
+
+    existing.companyNames.add(row.company);
+    existing.gross = round2(existing.gross + row.bolt);
+    groupedRows.set(key, existing);
+  }
+
+  return [...groupedRows.values()]
+    .filter((row) => row.gross > 0)
+    .map((row) => ({
+      driverName: row.driverName,
+      driverNameKey: row.driverNameKey,
+      company: [...row.companyNames].sort((a, b) => a.localeCompare(b)).join(" + "),
+      weekValue: row.weekValue,
+      week: row.week,
+      gross: row.gross,
+    }));
 }
 
 async function fetchBoltRowsForChunks(
@@ -426,6 +563,17 @@ function reindexRows(rows: WeeklyDriverInput[]): WeeklyDriverInput[] {
       ...row,
       id: index + 1,
     }));
+}
+
+function normalizeDriverNameKey(driverName: string): string {
+  return driverName
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 function saveBoltRows(

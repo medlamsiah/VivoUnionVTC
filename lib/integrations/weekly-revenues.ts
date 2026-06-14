@@ -1,6 +1,7 @@
 import {
   loadCachedBoltStatus,
   loadCachedBoltWeeklyRevenues,
+  loadPersistedBoltWeeklyRevenuesSnapshot,
   scrapeBoltWeeklyRevenuesResult,
   type WeeklyDriverInput,
 } from "@/lib/integrations/bolt-scraper";
@@ -146,7 +147,37 @@ export async function scrapeWeeklyRevenues(): Promise<WeeklyDriverInput[]> {
   return result.drivers;
 }
 
-export function readWeeklyRevenuesSnapshot(): WeeklyRevenuesResult {
+export async function readWeeklyRevenuesSnapshot(): Promise<WeeklyRevenuesResult> {
+  const persistedSnapshot = await loadPersistedBoltWeeklyRevenuesSnapshot();
+
+  if (persistedSnapshot.rows.length > 0) {
+    return {
+      drivers: persistedSnapshot.rows,
+      syncStatuses: [
+        {
+          platform: "bolt",
+          state: "cache",
+          updatedAt: persistedSnapshot.updatedAt
+            ? new Date(persistedSnapshot.updatedAt).toLocaleString("fr-FR")
+            : null,
+          message: "Donnees Bolt chargees depuis la base.",
+        },
+        {
+          platform: "uber",
+          state: "fallback",
+          updatedAt: null,
+          message: DISABLED_PLATFORM_MESSAGE,
+        },
+        {
+          platform: "heetch",
+          state: "fallback",
+          updatedAt: null,
+          message: DISABLED_PLATFORM_MESSAGE,
+        },
+      ],
+    };
+  }
+
   const cachedRows = loadCachedBoltWeeklyRevenues();
   const cachedStatus = loadCachedBoltStatus();
 

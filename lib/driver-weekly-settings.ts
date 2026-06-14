@@ -334,6 +334,10 @@ function buildGroupedWeeklyDriverMap(
   const groupedRows = new Map<string, WeeklyDriverInput>();
 
   for (const driver of drivers) {
+    if (round2(driver.uber + driver.bolt + driver.heetch) <= 0) {
+      continue;
+    }
+
     const key = getSettingKey(normalizeDriverNameKey(driver.name), driver.weekValue);
     const existing = groupedRows.get(key);
 
