@@ -82,15 +82,28 @@ function isAuthorizedAdminOrCronRequest(request: NextRequest): boolean {
   }
 
   const origin = request.headers.get("origin");
+  const referer = request.headers.get("referer");
   const host = request.headers.get("host");
+  const forwardedHost = request.headers.get("x-forwarded-host");
   const fetchSite = request.headers.get("sec-fetch-site");
+  const requestHost = forwardedHost ?? host;
 
-  if (!origin || !host) {
+  if (!requestHost) {
     return false;
   }
 
   try {
-    return new URL(origin).host === host && (fetchSite === "same-origin" || fetchSite === "same-site");
+    const source = origin ?? referer;
+    if (!source) {
+      return false;
+    }
+
+    const sourceUrl = new URL(source);
+    const isSameHost = sourceUrl.host === requestHost;
+    const isAdminPage = sourceUrl.pathname === "/admin" || sourceUrl.pathname.startsWith("/admin/");
+    const isSameSiteRequest = !fetchSite || fetchSite === "same-origin" || fetchSite === "same-site";
+
+    return isSameHost && isAdminPage && isSameSiteRequest;
   } catch {
     return false;
   }
