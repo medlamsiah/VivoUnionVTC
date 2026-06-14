@@ -58,7 +58,7 @@ const DEFAULT_BOLT_COMPANY_OPTIONS = [
 ];
 
 export function buildVivoDashboardData(drivers: WeeklyDriverInput[]): VivoDashboardData {
-  const weeklyRows = drivers.map(toWeeklyRow);
+  const weeklyRows = drivers.map(toWeeklyRow).filter((row) => row.totalBrut > 0);
   const monthlyRows = buildMonthlyRows(weeklyRows);
   const companyOptions = unique([...DEFAULT_BOLT_COMPANY_OPTIONS, ...weeklyRows.map((row) => row.company)]);
 

@@ -37,7 +37,7 @@ type AdminLocationsPageProps = {
 
 export default async function AdminLocationsPage({ searchParams }: AdminLocationsPageProps) {
   const params = await resolveSearchParams(searchParams);
-  const revenuesResult = readWeeklyRevenuesSnapshot();
+  const revenuesResult = await readWeeklyRevenuesSnapshot();
   const [weeklySettings, locationTypePricings] = await Promise.all([
     listDriverWeeklyLocationSettings(),
     listLocationTypePricings(),
@@ -133,7 +133,7 @@ export default async function AdminLocationsPage({ searchParams }: AdminLocation
       listDriverWeeklyLocationSettings(),
       listLocationTypePricings(),
     ]);
-    const revenuesSnapshot = readWeeklyRevenuesSnapshot();
+    const revenuesSnapshot = await readWeeklyRevenuesSnapshot();
     const groupedRows = buildDriverWeeklyLocationEditorRows(revenuesSnapshot.drivers, latestSettings, latestPricings);
     const selectedWeeklyRow =
       groupedRows.find((row) => row.driverName === driverName && row.weekValue === weekValue) ?? null;
@@ -216,7 +216,7 @@ export default async function AdminLocationsPage({ searchParams }: AdminLocation
       listDriverWeeklyLocationSettings(),
       listLocationTypePricings(),
     ]);
-    const revenuesSnapshot = readWeeklyRevenuesSnapshot();
+    const revenuesSnapshot = await readWeeklyRevenuesSnapshot();
     const groupedRows = buildDriverWeeklyLocationEditorRows(revenuesSnapshot.drivers, latestSettings, latestPricings);
     const selectedWeeklyRow =
       groupedRows.find((row) => row.driverName === driverName && row.weekValue === weekValue) ?? null;
