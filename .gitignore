@@ -53,6 +53,7 @@ Thumbs.db
 tsconfig.tsbuildinfo
 *.csv
 uber-session.json
+storage/uber-session.json
 uber-page-text.txt
 uber-current-url.txt
 uber-data.json

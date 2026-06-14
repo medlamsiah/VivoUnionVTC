@@ -347,9 +347,8 @@ export function AdminVivoDashboard({
                   Export Excel
                 </a>
                 <BoltSyncButton className="inline-flex items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-500" />
-                <ManualSyncButton className="inline-flex items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-500" />
-                <UberBackfillButton className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800" />
-                <UberIdentifyButton className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-emerald-200 hover:text-emerald-700" />
+                <UberLoginSessionButton className="inline-flex items-center justify-center rounded-2xl border border-sky-200 bg-white px-4 py-3 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-50" />
+                <UberDownloadLatestReportButton className="inline-flex items-center justify-center rounded-2xl bg-sky-800 px-4 py-3 text-sm font-semibold text-white transition hover:bg-sky-700" />
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2 xl:hidden">
@@ -384,9 +383,8 @@ export function AdminVivoDashboard({
                   Export Excel
                 </a>
                 <BoltSyncButton className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500" />
-                <ManualSyncButton className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500" />
-                <UberBackfillButton className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800" />
-                <UberIdentifyButton className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-emerald-200 hover:text-emerald-700" />
+                <UberLoginSessionButton className="rounded-full border border-sky-200 bg-white px-4 py-2 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-50" />
+                <UberDownloadLatestReportButton className="rounded-full bg-sky-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-700" />
               </div>
 
               <div className="mt-5 rounded-[22px] border border-slate-200 bg-slate-50 p-4">
@@ -482,9 +480,8 @@ export function AdminVivoDashboard({
                       <div className="mt-1 text-sm text-slate-600">{uberSessionStatusMessage(uberSessionStatus)}</div>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <UberIdentifyButton className="inline-flex rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-emerald-200 hover:text-emerald-700" />
-                      <UberBackfillButton className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800" />
-                      <ManualSyncButton className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500" />
+                      <UberLoginSessionButton className="rounded-full border border-sky-200 bg-white px-4 py-2 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-50" />
+                      <UberDownloadLatestReportButton className="rounded-full bg-sky-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-700" />
                     </div>
                   </div>
                 </div>
@@ -1019,31 +1016,37 @@ function BoltSyncButton({ className }: { className: string }) {
   );
 }
 
-function ManualSyncButton({ className }: { className: string }) {
+function UberLoginSessionButton({ className }: { className: string }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<string>("");
 
   async function handleClick() {
-    setMessage("");
+    setMessage("Ouverture Chromium Uber. Entrez le code email dans la fenetre ouverte...");
 
     startTransition(async () => {
       try {
-        const response = await fetch("/api/integrations/uber/sync", {
+        const response = await fetch("/api/admin/uber/login-session", {
           method: "POST",
           cache: "no-store",
         });
-        const payload = await response.json().catch(() => null);
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              ok?: boolean;
+              cookies?: number;
+              error?: string;
+            }
+          | null;
 
-        if (!response.ok) {
-          setMessage(payload?.error ?? "Synchro Uber impossible pour le moment.");
+        if (!response.ok || !payload?.ok) {
+          setMessage(payload?.error ?? "Creation de session Uber impossible.");
           return;
         }
 
-        setMessage(`Uber 24h synchronise: ${payload.imported ?? 0} importees, ${payload.updated ?? 0} mises a jour.`);
+        setMessage(`Session Uber sauvegardee: ${payload.cookies ?? 0} cookies.`);
         router.refresh();
       } catch {
-        setMessage("Erreur reseau pendant la synchro Uber.");
+        setMessage("Erreur reseau pendant la creation de session Uber.");
       }
     });
   }
@@ -1051,47 +1054,50 @@ function ManualSyncButton({ className }: { className: string }) {
   return (
     <div className="flex flex-col gap-1.5">
       <button type="button" onClick={handleClick} disabled={isPending} className={`${className} disabled:cursor-not-allowed disabled:opacity-60`}>
-        {isPending ? "Synchronisation Uber..." : "Synchroniser Uber 24h"}
+        {isPending ? "Session Uber..." : "Creer session Uber"}
       </button>
       {message ? <span className="text-xs text-slate-500">{message}</span> : null}
     </div>
   );
 }
 
-function UberBackfillButton({ className }: { className: string }) {
+function UberDownloadLatestReportButton({ className }: { className: string }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<string>("");
 
   async function handleClick() {
-    setMessage("Import historique Uber depuis le 01/01/2026...");
+    setMessage("Telechargement du dernier rapport Uber...");
 
     startTransition(async () => {
       try {
-        const response = await fetch("/api/integrations/uber/sync", {
+        const response = await fetch("/api/admin/uber/download-latest-report", {
           method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            startDate: "2026-01-01T00:00:00.000Z",
-            endDate: new Date().toISOString(),
-          }),
           cache: "no-store",
         });
-        const payload = await response.json().catch(() => null);
+        const payload = (await response.json().catch(() => null)) as
+          | {
+              ok?: boolean;
+              imported?: number;
+              updated?: number;
+              matchedDrivers?: string[];
+              unmatchedDrivers?: string[];
+              errors?: string[];
+              error?: string;
+            }
+          | null;
 
-        if (!response.ok) {
-          setMessage(payload?.error ?? "Import historique Uber impossible.");
+        if (!response.ok || !payload?.ok) {
+          setMessage(payload?.error ?? "Telechargement du rapport Uber impossible.");
           return;
         }
 
         setMessage(
-          `Historique Uber OK: ${payload.imported ?? 0} importees, ${payload.updated ?? 0} mises a jour sur ${payload.daysSynced ?? 0} jours.`,
+          `Dernier rapport Uber importe: ${payload.imported ?? 0} ligne(s), ${payload.updated ?? 0} mise(s) a jour, ${payload.matchedDrivers?.length ?? 0} chauffeur(s) trouve(s), ${payload.unmatchedDrivers?.length ?? 0} non trouve(s).`,
         );
         router.refresh();
       } catch {
-        setMessage("Erreur reseau pendant l'import historique Uber.");
+        setMessage("Erreur reseau pendant le telechargement Uber.");
       }
     });
   }
@@ -1099,69 +1105,9 @@ function UberBackfillButton({ className }: { className: string }) {
   return (
     <div className="flex flex-col gap-1.5">
       <button type="button" onClick={handleClick} disabled={isPending} className={`${className} disabled:cursor-not-allowed disabled:opacity-60`}>
-        {isPending ? "Import historique..." : "Importer historique"}
+        {isPending ? "Telechargement Uber..." : "Telecharger dernier rapport Uber"}
       </button>
       {message ? <span className="text-xs text-slate-500">{message}</span> : null}
-    </div>
-  );
-}
-
-function UberIdentifyButton({ className }: { className: string }) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
-  const [message, setMessage] = useState<string>("");
-
-  async function handleClick() {
-    setMessage("Identification Uber en cours...");
-
-    startTransition(async () => {
-      try {
-        const loginResponse = await fetch("/api/integrations/uber/login", {
-          method: "POST",
-          cache: "no-store",
-        });
-        const loginPayload = await loginResponse.json().catch(() => null);
-
-        if (!loginResponse.ok) {
-          setMessage(loginPayload?.error ?? "Identification Uber incomplete.");
-          return;
-        }
-
-        const syncResponse = await fetch("/api/integrations/uber/sync", {
-          method: "POST",
-          cache: "no-store",
-        });
-        const syncPayload = await syncResponse.json().catch(() => null);
-
-        if (!syncResponse.ok) {
-          setMessage(syncPayload?.error ?? "Identification OK, synchronisation Uber refusee.");
-          router.refresh();
-          return;
-        }
-
-        setMessage(`Identification OK. ${syncPayload.imported ?? 0} importees, ${syncPayload.updated ?? 0} mises a jour.`);
-        router.refresh();
-      } catch {
-        setMessage("Identification Uber impossible depuis ce serveur.");
-      }
-    });
-  }
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      <button type="button" onClick={handleClick} disabled={isPending} className={`${className} disabled:cursor-not-allowed disabled:opacity-60`}>
-        {isPending ? "Identification Uber..." : "Identifier Uber"}
-      </button>
-      {message ? (
-        <span className="text-xs text-slate-500">
-          {message}{" "}
-          {message.includes("Vercel") ? (
-            <Link href="/admin/uber-session" className="font-semibold text-emerald-700 underline">
-              Session manuelle
-            </Link>
-          ) : null}
-        </span>
-      ) : null}
     </div>
   );
 }
