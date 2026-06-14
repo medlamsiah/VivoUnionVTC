@@ -30,6 +30,8 @@ type StoredSession = {
   cookies?: CookieParam[];
 };
 
+type DownloadSnapshot = Map<string, { size: number; mtimeMs: number }>;
+
 export async function downloadAndImportLatestUberReport(): Promise<UberReportDownloadResult> {
   const logs: string[] = [];
   const sessionFile = getUberSessionFile();
@@ -64,7 +66,7 @@ export async function downloadAndImportLatestUberReport(): Promise<UberReportDow
 
     logs.push("Recherche du dernier rapport Paiements par chauffeur...");
     await waitForReports(page);
-    const beforeFiles = await listFiles(downloadDir);
+    const beforeFiles = await snapshotFiles(downloadDir);
     const clicked = await clickLatestPaymentsDriverDownload(page);
 
     if (!clicked) {
@@ -326,20 +328,32 @@ async function clickLatestPaymentsDriverDownload(page: Page): Promise<boolean> {
   }, REPORT_LABELS);
 }
 
-async function waitForDownloadedFile(downloadDir: string, beforeFiles: Set<string>): Promise<string> {
+async function waitForDownloadedFile(downloadDir: string, beforeFiles: DownloadSnapshot): Promise<string> {
   const startedAt = Date.now();
   let lastCandidate = "";
   let lastSize = -1;
   let stableCount = 0;
 
   while (Date.now() - startedAt < 120_000) {
-    const files = await listFiles(downloadDir);
-    const candidates = [...files].filter((file) => !beforeFiles.has(file) && !file.endsWith(".crdownload"));
+    const files = await snapshotFiles(downloadDir);
+    const candidates = [...files]
+      .filter(([file, snapshot]) => {
+        if (file.endsWith(".crdownload")) {
+          return false;
+        }
+
+        const previous = beforeFiles.get(file);
+        return !previous || previous.size !== snapshot.size || previous.mtimeMs !== snapshot.mtimeMs;
+      })
+      .map(([file, snapshot]) => ({
+        file,
+        snapshot,
+      }));
 
     if (candidates.length > 0) {
       const candidate = candidates
-        .map((file) => path.join(downloadDir, file))
-        .sort()
+        .sort((left, right) => left.snapshot.mtimeMs - right.snapshot.mtimeMs)
+        .map(({ file }) => path.join(downloadDir, file))
         .at(-1)!;
       const stat = await fs.stat(candidate);
 
@@ -362,11 +376,26 @@ async function waitForDownloadedFile(downloadDir: string, beforeFiles: Set<strin
   throw new Error("Telechargement du rapport Uber non termine dans le delai imparti.");
 }
 
-async function listFiles(directory: string): Promise<Set<string>> {
+async function snapshotFiles(directory: string): Promise<DownloadSnapshot> {
   try {
-    return new Set(await fs.readdir(directory));
+    const entries = await fs.readdir(directory);
+    const snapshot: DownloadSnapshot = new Map();
+
+    await Promise.all(
+      entries.map(async (file) => {
+        const stat = await fs.stat(path.join(directory, file));
+        if (stat.isFile()) {
+          snapshot.set(file, {
+            size: stat.size,
+            mtimeMs: stat.mtimeMs,
+          });
+        }
+      }),
+    );
+
+    return snapshot;
   } catch {
-    return new Set();
+    return new Map();
   }
 }
 
