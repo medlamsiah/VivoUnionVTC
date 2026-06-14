@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
       {
         ok: false,
         provider: "uber",
-        error: "Creation de session Uber interactive indisponible sur Vercel. Lancez-la sur une machine locale.",
+        error: "Creation de session Uber interactive indisponible sur le serveur. Lancez-la sur une machine locale puis transferez storage/uber-session.json.",
       },
       { status: 400 },
     );

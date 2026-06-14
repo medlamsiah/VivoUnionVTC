@@ -48,6 +48,7 @@ type ViewMode = "separate" | "merged" | "both";
 type ActiveTable = "charts" | "detailed" | "merged" | "monthly" | "uber" | "leads";
 
 const PAGE_SIZE = 10;
+const CAN_CREATE_UBER_SESSION = process.env.NODE_ENV !== "production";
 const chartPalette = ["#0f766e", "#14b8a6", "#0f172a", "#f59e0b", "#0ea5e9", "#f97316"];
 
 export function AdminVivoDashboard({
@@ -347,7 +348,9 @@ export function AdminVivoDashboard({
                   Export Excel
                 </a>
                 <BoltSyncButton className="inline-flex items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-500" />
-                <UberLoginSessionButton className="inline-flex items-center justify-center rounded-2xl border border-sky-200 bg-white px-4 py-3 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-50" />
+                {CAN_CREATE_UBER_SESSION ? (
+                  <UberLoginSessionButton className="inline-flex items-center justify-center rounded-2xl border border-sky-200 bg-white px-4 py-3 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-50" />
+                ) : null}
                 <UberDownloadLatestReportButton className="inline-flex items-center justify-center rounded-2xl bg-sky-800 px-4 py-3 text-sm font-semibold text-white transition hover:bg-sky-700" />
               </div>
 
@@ -383,7 +386,9 @@ export function AdminVivoDashboard({
                   Export Excel
                 </a>
                 <BoltSyncButton className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500" />
-                <UberLoginSessionButton className="rounded-full border border-sky-200 bg-white px-4 py-2 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-50" />
+                {CAN_CREATE_UBER_SESSION ? (
+                  <UberLoginSessionButton className="rounded-full border border-sky-200 bg-white px-4 py-2 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-50" />
+                ) : null}
                 <UberDownloadLatestReportButton className="rounded-full bg-sky-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-700" />
               </div>
 
@@ -480,7 +485,9 @@ export function AdminVivoDashboard({
                       <div className="mt-1 text-sm text-slate-600">{uberSessionStatusMessage(uberSessionStatus)}</div>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <UberLoginSessionButton className="rounded-full border border-sky-200 bg-white px-4 py-2 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-50" />
+                      {CAN_CREATE_UBER_SESSION ? (
+                        <UberLoginSessionButton className="rounded-full border border-sky-200 bg-white px-4 py-2 text-sm font-semibold text-sky-800 transition hover:border-sky-300 hover:bg-sky-50" />
+                      ) : null}
                       <UberDownloadLatestReportButton className="rounded-full bg-sky-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-700" />
                     </div>
                   </div>
