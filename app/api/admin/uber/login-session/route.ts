@@ -62,15 +62,8 @@ function isAuthorizedAdminRequest(request: NextRequest): boolean {
 
   const origin = request.headers.get("origin");
   const referer = request.headers.get("referer");
-  const host = request.headers.get("host");
-  const forwardedHost = request.headers.get("x-forwarded-host");
   const fetchSite = request.headers.get("sec-fetch-site");
-  const requestHost = forwardedHost ?? host;
   const isSameSiteRequest = fetchSite === "same-origin" || fetchSite === "same-site";
-
-  if (!requestHost) {
-    return false;
-  }
 
   try {
     const source = origin ?? referer;
