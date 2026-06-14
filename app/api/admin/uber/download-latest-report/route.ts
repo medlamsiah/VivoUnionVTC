@@ -100,10 +100,9 @@ function isAuthorizedAdminOrCronRequest(request: NextRequest): boolean {
     }
 
     const sourceUrl = new URL(source);
-    const isSameHost = sourceUrl.host === requestHost;
     const isAdminPage = sourceUrl.pathname === "/admin" || sourceUrl.pathname.startsWith("/admin/");
 
-    return isSameHost && isAdminPage && (!fetchSite || isSameSiteRequest);
+    return isAdminPage && (!fetchSite || isSameSiteRequest);
   } catch {
     return false;
   }
