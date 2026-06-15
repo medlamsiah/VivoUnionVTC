@@ -11,6 +11,7 @@
     "start": "next start",
     "lint": "next lint",
     "uber:login-session": "tsx scripts/uber-login-session.ts",
+    "uber:refresh-session": "tsx scripts/refresh-uber-session.ts",
     "uber:download-report": "tsx scripts/download-uber-report.ts",
     "postinstall": "prisma generate"
   },
